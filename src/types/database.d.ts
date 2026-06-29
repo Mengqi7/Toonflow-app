@@ -1,4 +1,4 @@
-// @db-hash f5d050145d03a52b5b502043bc559ec0
+// @db-hash c8997fc035f5a86a2b8516ee4b168e27
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -67,6 +67,39 @@ export interface o_assetsRole2Audio {
   'assetsAudioId'?: number;
   'assetsRoleId'?: number;
 }
+export interface o_character_library {
+  'accessories'?: string | null;
+  'characterName'?: string | null;
+  'createTime'?: number | null;
+  'description'?: string | null;
+  'hairStyle'?: string | null;
+  'id'?: number;
+  'outfitStyle'?: string | null;
+  'projectId'?: number | null;
+  'referenceImage'?: string | null;
+  'updateTime'?: number | null;
+}
+export interface o_comfyui_server {
+  'baseUrl'?: string | null;
+  'createTime'?: number | null;
+  'enabled'?: number | null;
+  'id'?: number;
+  'name'?: string | null;
+  'wsUrl'?: string | null;
+}
+export interface o_comfyui_workflow {
+  'createdBy'?: string | null;
+  'createTime'?: number | null;
+  'description'?: string | null;
+  'id'?: number;
+  'name'?: string | null;
+  'parameters'?: string | null;
+  'serverId'?: number | null;
+  'thumbnail'?: string | null;
+  'type'?: string | null;
+  'updateTime'?: number | null;
+  'workflow_json'?: string | null;
+}
 export interface o_event {
   'createTime'?: number | null;
   'detail'?: string | null;
@@ -92,12 +125,21 @@ export interface o_imageFlow {
   'flowData': string;
   'id'?: number;
 }
+export interface o_memory {
+  'embedding'?: any | null;
+  'id'?: string | null;
+  'key': string;
+  'namespace': string;
+  'timestamp': number;
+  'ttl'?: number | null;
+  'type': string;
+  'value': string;
+}
 export interface o_modelPrompt {
   'fileName'?: string | null;
   'id'?: number;
   'model'?: string | null;
   'path'?: string | null;
-  'prompt'?: string | null;
   'vendorId'?: string | null;
 }
 export interface o_novel {
@@ -134,6 +176,29 @@ export interface o_prompt {
   'name'?: string | null;
   'type'?: string | null;
   'useData'?: string | null;
+}
+export interface o_review_preference {
+  'confidence'?: number | null;
+  'criterion'?: string | null;
+  'id'?: string;
+  'learnedValue'?: string | null;
+  'projectId'?: number | null;
+  'sampleCount'?: number | null;
+  'updateTime'?: number | null;
+  'userId'?: number | null;
+}
+export interface o_review_report {
+  'attemptNumber'?: number | null;
+  'createTime'?: number | null;
+  'decision'?: string | null;
+  'feedback'?: string | null;
+  'id'?: string;
+  'nodeId'?: string | null;
+  'scores'?: string | null;
+  'targetId'?: string | null;
+  'targetType'?: string | null;
+  'totalScore'?: number | null;
+  'workflowInstanceId'?: string | null;
 }
 export interface o_script {
   'content'?: string | null;
@@ -228,6 +293,17 @@ export interface o_videoTrack {
   'state'?: string | null;
   'videoId'?: number | null;
 }
+export interface o_workflow_state {
+  'completedAt'?: number | null;
+  'contextRefs'?: string | null;
+  'definitionId': string;
+  'id'?: string;
+  'nodeStates'?: string | null;
+  'projectId'?: number | null;
+  'startedAt'?: number | null;
+  'status'?: string;
+  'userId'?: number | null;
+}
 
 export interface DB {
   "memories": memories;
@@ -237,14 +313,20 @@ export interface DB {
   "o_assets": o_assets;
   "o_assets2Storyboard": o_assets2Storyboard;
   "o_assetsRole2Audio": o_assetsRole2Audio;
+  "o_character_library": o_character_library;
+  "o_comfyui_server": o_comfyui_server;
+  "o_comfyui_workflow": o_comfyui_workflow;
   "o_event": o_event;
   "o_eventChapter": o_eventChapter;
   "o_image": o_image;
   "o_imageFlow": o_imageFlow;
+  "o_memory": o_memory;
   "o_modelPrompt": o_modelPrompt;
   "o_novel": o_novel;
   "o_project": o_project;
   "o_prompt": o_prompt;
+  "o_review_preference": o_review_preference;
+  "o_review_report": o_review_report;
   "o_script": o_script;
   "o_scriptAssets": o_scriptAssets;
   "o_setting": o_setting;
@@ -256,4 +338,5 @@ export interface DB {
   "o_vendorConfig": o_vendorConfig;
   "o_video": o_video;
   "o_videoTrack": o_videoTrack;
+  "o_workflow_state": o_workflow_state;
 }

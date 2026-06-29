@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Toonflow 2.0 — ComfyUI 管理器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e);color:#e0e0e0;min-height:100vh;padding:40px 20px}
+.container{max-width:900px;margin:0 auto}
+h1{font-size:28px;margin-bottom:8px;background:linear-gradient(90deg,#3498db,#2ecc71);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{color:#888;margin-bottom:32px;font-size:14px}
+.card{background:#16213e;border:1px solid #2a2a4a;border-radius:12px;padding:24px;margin-bottom:20px}
+.card h2{font-size:16px;margin-bottom:16px;color:#3498db}
+.form-row{display:flex;gap:12px;margin-bottom:12px;align-items:flex-end}
+.form-row input,.form-row select{flex:1;padding:10px 14px;background:#0f3460;border:1px solid #2a2a4a;border-radius:8px;color:#e0e0e0;font-size:14px}
+.form-row input:focus{outline:none;border-color:#3498db}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:all .15s}
+.btn-primary{background:#3498db;color:#fff}
+.btn-danger{background:#e74c3c;color:#fff}
+.btn-success{background:#2ecc71;color:#fff}
+.btn:hover{filter:brightness(1.2)}
+.list-item{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#0f3460;border-radius:8px;margin-bottom:8px}
+.list-item .name{font-weight:600}
+.list-item .status{font-size:12px;padding:4px 10px;border-radius:20px}
+.status-connected{background:#2ecc7140;color:#2ecc71}
+.status-disconnected{background:#e74c3c40;color:#e74c3c}
+.empty{text-align:center;color:#555;padding:30px}
+.token-section{margin-bottom:24px}
+.token-section input{width:100%;padding:10px 14px;background:#0f3460;border:1px solid #2a2a4a;border-radius:8px;color:#e0e0e0;font-size:14px}
+.logo{font-size:48px;margin-bottom:8px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:#16213e;border:1px solid #2a2a4a;border-radius:12px;padding:20px;text-align:center}
+.stat-card .value{font-size:32px;font-weight:700;color:#3498db}
+.stat-card .label{font-size:12px;color:#888;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">⚙️</div>
+  <h1>Toonflow 2.0 — 新增功能</h1>
+  <p class="subtitle">Harness 多Agent引擎 · ComfyUI 集成 · 审核流水线</p>
+
+  <div class="card token-section">
+    <h2>🔑 登录凭证</h2>
+    <input type="text" id="token" placeholder="粘贴从登录接口获取的 token (Bearer xxx...)" onchange="setToken(this.value)">
+    <div style="margin-top:8px;font-size:12px;color:#888">点击"自动获取"或从控制台复制 token</div>
+    <button class="btn btn-primary" style="margin-top:8px" onclick="autoLogin()">自动获取 (admin/admin123)</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card"><div class="value" id="stat-agents">10</div><div class="label">新增 Agent 角色</div></div>
+    <div class="stat-card"><div class="value" id="stat-routes">14</div><div class="label">新增 API 路由</div></div>
+    <div class="stat-card"><div class="value" id="stat-files">45</div><div class="label">新增源文件</div></div>
+  </div>
+
+  <div class="card">
+    <h2>🖥️ ComfyUI 服务管理</h2>
+    <div class="form-row">
+      <input type="text" id="serverName" placeholder="服务名称 (如: 本地 4090)">
+      <input type="text" id="serverUrl" placeholder="http://localhost:8188">
+      <button class="btn btn-primary" onclick="addServer()">添加服务</button>
+    </div>
+    <div id="serverList" style="margin-top:16px"><div class="empty">加载中...</div></div>
+  </div>
+
+  <div class="card">
+    <h2>📦 工作流管理</h2>
+    <div class="form-row">
+      <input type="text" id="wfName" placeholder="工作流名称">
+      <select id="wfServer" style="flex:1;padding:10px;background:#0f3460;border:1px solid #2a2a4a;border-radius:8px;color:#e0e0e0"><option>--选择ComfyUI服务--</option></select>
+      <button class="btn btn-success" onclick="importWorkflow()">导入JSON</button>
+    </div>
+    <div id="workflowList" style="margin-top:16px"><div class="empty">加载中...</div></div>
+  </div>
+
+  <div class="card">
+    <h2>🔗 快速链接</h2>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <button class="btn" style="background:#8e44ad;color:#fff" onclick="window.open('/review-dashboard.html')">审查 Dashboard</button>
+      <button class="btn" style="background:#16a085;color:#fff" onclick="window.open('http://localhost:5173/#/harness')">Vue Harness Monitor (需前端)</button>
+      <button class="btn" style="background:#d35400;color:#fff" onclick="window.open('http://localhost:5173')">Toonflow Web (Vue前端)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let token='';
+function setToken(t){token=t}
+async function autoLogin(){
+  try{const r=await fetch('/api/login/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'admin',password:'admin123'})});const d=await r.json();token=d.data.token;document.getElementById('token').value=token;loadAll()}catch(e){alert('登录失败: '+e.message)}
+}
+async function api(path,opts={}){const h={'Authorization':token,'Content-Type':'application/json',...opts.headers};const r=await fetch(path,{...opts,headers:h});return r.json()}
+async function loadAll(){loadServers();loadWorkflows();loadServerSelect()}
+async function loadServers(){
+  const el=document.getElementById('serverList');
+  try{const d=await api('/api/comfyui/getServerList');if(!d.data||!d.data.length){el.innerHTML='<div class="empty">暂无 ComfyUI 服务，请添加</div>';return}
+  el.innerHTML=d.data.map(s=>'<div class="list-item"><span class="name">'+s.name+'<br><small style="color:#888">'+s.baseUrl+'</small></span><span class="status '+(s.enabled?'status-connected">已启用':'status-disconnected">已禁用')+'</span><button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteServer('+s.id+')">删除</button></div>').join('')}catch(e){el.innerHTML='<div class="empty">加载失败 (请先登录)</div>'}
+}
+async function deleteServer(id){await api('/api/comfyui/deleteServer/'+id,{method:'DELETE'});loadAll()}
+async function addServer(){
+  const name=document.getElementById('serverName').value;
+  const baseUrl=document.getElementById('serverUrl').value;
+  if(!name||!baseUrl)return alert('请填写名称和地址');
+  await api('/api/comfyui/addServer',{method:'POST',body:JSON.stringify({name,baseUrl})});
+  document.getElementById('serverName').value='';document.getElementById('serverUrl').value='';loadAll()
+}
+async function loadWorkflows(){
+  const el=document.getElementById('workflowList');
+  try{const d=await api('/api/comfyui/getWorkflows');if(!d.data||!d.data.length){el.innerHTML='<div class="empty">暂无工作流</div>';return}
+  el.innerHTML=d.data.map(w=>'<div class="list-item"><span class="name">'+w.name+'<br><small style="color:#888">ID:'+w.id+' | Type:'+w.type+' | Created:'+w.createdBy+'</small></span><button class="btn btn-primary" style="padding:4px 10px;font-size:12px" onclick="testWorkflow('+w.id+')">测试</button><button class="btn btn-danger" style="padding:4px 10px;font-size:12px" onclick="deleteWorkflow('+w.id+')">删除</button></div>').join('')}catch(e){el.innerHTML='<div class="empty">加载失败 (请先登录)</div>'}
+}
+async function deleteWorkflow(id){await api('/api/comfyui/deleteWorkflow/'+id,{method:'DELETE'});loadAll()}
+async function testWorkflow(id){try{const d=await api('/api/comfyui/testWorkflow/'+id,{method:'POST'});alert('已提交测试: '+JSON.stringify(d))}catch(e){alert('测试失败: '+e.message)}}
+async function importWorkflow(){
+  const name=document.getElementById('wfName').value||'未命名工作流';
+  const serverId=document.getElementById('wfServer').value;
+  const input=document.createElement('input');input.type='file';input.accept='.json';
+  input.onchange=async e=>{
+    const file=e.target.files[0];if(!file)return;
+    const text=await file.text();const wf=JSON.parse(text);
+    await api('/api/comfyui/importWorkflow',{method:'POST',body:JSON.stringify({name,serverId:parseInt(serverId)||1,type:'image',workflowJson:JSON.stringify(wf)})});
+    loadAll()
+  };input.click()
+}
+async function loadServerSelect(){
+  const sel=document.getElementById('wfServer');
+  try{const d=await api('/api/comfyui/getServerList');sel.innerHTML='<option value="">--选择服务--</option>'+d.data.map(s=>'<option value="'+s.id+'">'+s.name+' ('+s.baseUrl+')</option>').join('')}catch(e){}
+}
+setTimeout(autoLogin,500);
+</script>
+</body>
+</html>

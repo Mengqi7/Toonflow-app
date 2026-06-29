@@ -1,0 +1,17 @@
+{
+  "name": "toonflow-comfyui-agent",
+  "version": "1.0.0",
+  "description": "AI-powered ComfyUI workflow generation and optimization agent",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.0.0",
+    "axios": "^1.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

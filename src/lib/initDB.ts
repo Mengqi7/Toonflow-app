@@ -382,6 +382,7 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
         table.primary(["id"]);
         table.unique(["id"]);
       },
+
       initData: async (knex) => {},
     },
     //小说原文表
@@ -1033,7 +1034,109 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
         table.unique(["assetsAudioId", "assetsRoleId"]);
       },
     },
-  ];
+    // ComfyUI 服务配置
+    {
+      name: "o_comfyui_server",
+      builder: (table) => {
+        table.integer("id").notNullable();
+        table.text("name");
+        table.text("baseUrl");
+        table.text("wsUrl");
+        table.integer("enabled").defaultTo(1);
+        table.integer("createTime");
+        table.primary(["id"]);
+        table.unique(["id"]);
+      },
+    },
+    // ComfyUI 工作流
+    {
+      name: "o_comfyui_workflow",
+      builder: (table) => {
+        table.integer("id").notNullable();
+        table.integer("serverId");
+        table.text("name");
+        table.text("description");
+        table.text("type");
+        table.text("workflow_json");
+        table.text("parameters");
+        table.text("thumbnail");
+        table.text("createdBy");
+        table.integer("createTime");
+        table.integer("updateTime");
+        table.primary(["id"]);
+        table.unique(["id"]);
+      },
+    },
+    // Harness 工作流状态持久化
+    {
+      name: "o_workflow_state",
+      builder: (table) => {
+        table.text("id").notNullable();
+        table.text("definitionId").notNullable();
+        table.text("status").notNullable().defaultTo("pending");
+        table.text("nodeStates");  // JSON: { [nodeId]: NodeState }
+        table.text("contextRefs"); // JSON: { [nodeId]: key } 引用 MemoryBus
+        table.integer("startedAt");
+        table.integer("completedAt");
+        table.integer("projectId");
+        table.integer("userId");
+        table.primary(["id"]);
+        table.index(["status"]);
+      },
+    },
+    // 审核报告
+    {
+      name: "o_review_report",
+      builder: (table) => {
+        table.text("id").notNullable();
+        table.text("workflowInstanceId");
+        table.text("nodeId");
+        table.text("targetType");  // shot/scene/script/video
+        table.text("targetId");
+        table.integer("attemptNumber");
+        table.text("scores");      // JSON: ReviewScore
+        table.float("totalScore");
+        table.text("decision");    // accepted/rejected
+        table.text("feedback");
+        table.integer("createTime");
+        table.primary(["id"]);
+        table.index(["workflowInstanceId"]);
+      },
+    },
+    // 审核偏好学习
+    {
+      name: "o_review_preference",
+      builder: (table) => {
+        table.text("id").notNullable();
+        table.integer("userId");
+        table.integer("projectId");
+        table.text("criterion");
+        table.text("learnedValue");
+        table.float("confidence").defaultTo(0.5);
+        table.integer("sampleCount").defaultTo(1);
+        table.integer("updateTime");
+        table.primary(["id"]);
+        table.index(["userId", "criterion"]);
+      },
+    },
+    // 角色形象库
+    {
+      name: "o_character_library",
+      builder: (table) => {
+        table.integer("id").notNullable();
+        table.integer("projectId");
+        table.text("characterName");
+        table.text("description");
+        table.text("referenceImage");
+        table.text("outfitStyle");
+        table.text("hairStyle");
+        table.text("accessories");
+        table.integer("createTime");
+        table.integer("updateTime");
+        table.primary(["id"]);
+        table.unique(["id"]);
+      },
+    }  ];
 
   for (const t of tables) {
     const tableExists = await knex.schema.hasTable(t.name);

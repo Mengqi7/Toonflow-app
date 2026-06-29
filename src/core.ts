@@ -16,6 +16,14 @@ function fileNameToRoutePath(fileName: string): string {
 type RouteModulePair = { routePath: string; varName: string; entry: string };
 
 export default async function generateRouter(): Promise<void> {
+  // 初始化 Harness 引擎
+  try {
+    const { initHarness } = await import("@/core/harness/init");
+    await initHarness();
+  } catch (err) {
+    console.warn("[Core] Harness init failed (non-fatal):", err);
+  }
+
   // glob 得到 entries
   let entries: string[] = await fg(["src/routes/**/*.ts"]);
   // 排序

@@ -1,0 +1,114 @@
+id: film-production
+version: "1.0"
+config:
+  globalTimeoutMs: 3600000
+  parallelLimit: 4
+
+nodes:
+  # === Stage 1: Scriptwriting ===
+  - id: screenwriter.analyze
+    type: agent
+    agentRole: screenwriter
+    input: { bindings: {}, static: { stage: "analyze" } }
+    output: { keys: [novelAnalysis] }
+  - id: screenwriter.adapt
+    type: agent
+    agentRole: screenwriter
+    input: { bindings: { analysis: "${screenwriter.analyze.novelAnalysis}" }, static: { stage: "adapt" } }
+    output: { keys: [adaptationStrategy] }
+  - id: screenwriter.generate
+    type: agent
+    agentRole: screenwriter
+    input: { bindings: { strategy: "${screenwriter.adapt.adaptationStrategy}" }, static: { stage: "generate" } }
+    output: { keys: [script] }
+  - id: review.script
+    type: review-gate
+    input: { bindings: { content: "${screenwriter.generate.script}" } }
+    config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: completeness, weight: 0.4, threshold: 0.8 }, { name: formatCompliance, weight: 0.3, threshold: 0.9 }, { name: dialogueNaturalness, weight: 0.3, threshold: 0.7 }], passThreshold: 0.75, onReject: retry } }
+
+  # === Stage 2: Visual Style + Storyboard ===
+  - id: director.style
+    type: agent
+    agentRole: director
+    input: { bindings: { script: "${screenwriter.generate.script}" }, static: { stage: "style" } }
+    output: { keys: [visualStyle] }
+  - id: review.style
+    type: review-gate
+    input: { bindings: { content: "${director.style.visualStyle}" } }
+    config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: styleCoherence, weight: 0.5, threshold: 0.8 }, { name: genreMatch, weight: 0.5, threshold: 0.8 }], passThreshold: 0.8, onReject: retry } }
+  - id: director.storyboard
+    type: agent
+    agentRole: director
+    input: { bindings: { script: "${screenwriter.generate.script}", style: "${director.style.visualStyle}" }, static: { stage: "storyboard" } }
+    output: { keys: [storyboardPlan] }
+
+  # === Stage 3: Parallel Image Generation ===
+  - id: generate.shots.fork
+    type: parallel-fork
+    input: { bindings: { items: "${director.storyboard.storyboardPlan.shots}" } }
+    config: { parallelDegree: 4 }
+  - id: generate.shot.unit
+    type: agent
+    agentRole: dp
+    input: { bindings: { shot: "${item}", style: "${director.style.visualStyle}" } }
+    output: { keys: [imageUrl, compositionPrompt] }
+  - id: review.image
+    type: review-gate
+    input: { bindings: { content: "${generate.shot.unit}" } }
+    config: { reviewGate: { criteria: [{ name: resolution, weight: 0.3, threshold: 0.9 }, { name: composition, weight: 0.3, threshold: 0.7 }, { name: styleMatch, weight: 0.4, threshold: 0.75 }], passThreshold: 0.75, onReject: retry } }
+  - id: generate.shots.join
+    type: parallel-join
+
+  # === Stage 4: Editing + Audio ===
+  - id: editor.assemble
+    type: agent
+    agentRole: editor
+    input: { bindings: { shots: "${generate.shots.join}", plan: "${director.storyboard.storyboardPlan}" } }
+    output: { keys: [editTimeline] }
+  - id: sound.design
+    type: agent
+    agentRole: sound
+    input: { bindings: { script: "${screenwriter.generate.script}", timeline: "${editor.assemble.editTimeline}" } }
+    output: { keys: [soundPlan] }
+
+  # === Stage 5: Parallel Video Generation ===
+  - id: generate.videos.fork
+    type: parallel-fork
+    input: { bindings: { items: "${editor.assemble.editTimeline.tracks[0].clips}" } }
+    config: { parallelDegree: 2 }
+  - id: generate.video.unit
+    type: agent
+    agentRole: dp
+    input: { bindings: { clip: "${item}", style: "${director.style.visualStyle}" } }
+    output: { keys: [videoUrl] }
+  - id: review.video
+    type: review-gate
+    input: { bindings: { content: "${generate.video.unit}" } }
+    config: { reviewGate: { criteria: [{ name: videoQuality, weight: 0.4, threshold: 0.75 }], passThreshold: 0.75, onReject: retry } }
+  - id: generate.videos.join
+    type: parallel-join
+
+  # === Stage 6: Final Assembly ===
+  - id: final.assemble
+    type: script
+    scriptId: final-render
+    input: { bindings: { timeline: "${editor.assemble.editTimeline}", videos: "${generate.videos.join}", audio: "${sound.design.soundPlan}" } }
+
+edges:
+  - { from: screenwriter.analyze, to: screenwriter.adapt }
+  - { from: screenwriter.adapt, to: screenwriter.generate }
+  - { from: screenwriter.generate, to: review.script }
+  - { from: review.script, to: director.style }
+  - { from: director.style, to: review.style }
+  - { from: review.style, to: director.storyboard }
+  - { from: director.storyboard, to: generate.shots.fork }
+  - { from: generate.shots.fork, to: generate.shot.unit }
+  - { from: generate.shot.unit, to: review.image }
+  - { from: review.image, to: generate.shots.join }
+  - { from: generate.shots.join, to: editor.assemble }
+  - { from: editor.assemble, to: sound.design }
+  - { from: sound.design, to: generate.videos.fork }
+  - { from: generate.videos.fork, to: generate.video.unit }
+  - { from: generate.video.unit, to: review.video }
+  - { from: review.video, to: generate.videos.join }
+  - { from: generate.videos.join, to: final.assemble }

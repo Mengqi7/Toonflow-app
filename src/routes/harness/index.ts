@@ -1,0 +1,134 @@
+import express from "express";
+import { v4 as uuid } from "uuid";
+import { harness } from "@/core/harness/init";
+import type { WorkflowInstance } from "@/core/harness/types";
+
+const router = express.Router();
+
+// 启动工作流
+router.post("/workflow/start", async (req, res) => {
+  try {
+    const { workflowId, projectId } = req.body;
+    if (!workflowId) return res.status(400).json({ code: 400, message: "workflowId required" });
+    const userId = (req as any).user?.id || 1;
+    const project = projectId || 0;
+
+    const instance: WorkflowInstance = {
+      id: uuid(),
+      definitionId: workflowId,
+      status: "pending",
+      nodeStates: new Map(),
+      context: {
+        data: new Map(),
+        projectId: project,
+        userId,
+        config: req.body.config || {},
+      },
+      startedAt: Date.now(),
+    };
+
+    // 注入 novel 数据到 context (screenwriter.analyze 会读取)
+    if (req.body.novel) {
+      instance.context.data.set("screenwriter.analyze", { novelAnalysis: null, novel: req.body.novel, stage: "analyze" });
+      // 同时注入到根级别供第一个节点作为 fallback
+      instance.context.config = { ...instance.context.config, novel: req.body.novel };
+    }
+
+    res.json({ code: 200, data: { instanceId: instance.id, status: "pending" } });
+
+    // 异步执行（不阻塞响应）
+    harness.workflowRunner.execute(instance).then(async (result) => {
+      console.log(`[Harness] Workflow ${instance.id} completed: ${result.status}`);
+      await harness.workflowRunner.saveInstanceState(instance);
+    }).catch(async (err) => {
+      console.error(`[Harness] Workflow ${instance.id} failed:`, err);
+      instance.status = "failed";
+      await harness.workflowRunner.saveInstanceState(instance);
+    });
+  } catch (e: any) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+// 查询工作流状态
+router.get("/workflow/:id/status", async (req, res) => {
+  try {
+    // 先查内存
+    const inst = await harness.workflowRunner.loadInstanceState(req.params.id);
+    if (!inst) return res.status(404).json({ code: 404, message: "Instance not found" });
+
+    const nodeStates: Record<string, string> = {};
+    inst.nodeStates.forEach((v, k) => { nodeStates[k] = v; });
+
+    res.json({
+      code: 200,
+      data: {
+        id: inst.id, definitionId: inst.definitionId, status: inst.status,
+        nodeStates, startedAt: inst.startedAt, completedAt: inst.completedAt,
+      },
+    });
+  } catch (e: any) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+// 暂停工作流
+router.post("/workflow/:id/pause", async (req, res) => {
+  try {
+    await harness.workflowRunner.pause(req.params.id);
+    res.json({ code: 200, data: { status: "paused" } });
+  } catch (e: any) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+// 恢复工作流
+router.post("/workflow/:id/resume", async (req, res) => {
+  try {
+    await harness.workflowRunner.resume(req.params.id);
+    res.json({ code: 200, data: { status: "running" } });
+  } catch (e: any) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+// 取消工作流
+router.post("/workflow/:id/cancel", async (req, res) => {
+  try {
+    await harness.workflowRunner.cancel(req.params.id);
+    res.json({ code: 200, data: { status: "cancelled" } });
+  } catch (e: any) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+// 列出可用工作流模板
+router.get("/workflows", async (_req, res) => {
+  try {
+    // 从注册的 workflow definitions 中获取
+    const defs = harness.workflowRunner.getDefinitions();
+    const workflows: any[] = [];
+    if (defs) {
+      for (const [id, def] of defs) {
+        workflows.push({ id, version: def.version, nodeCount: def.nodes?.length });
+      }
+    }
+    res.json({ code: 200, data: workflows });
+  } catch (e: any) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+// 列出已注册 Agent
+router.get("/agents", async (_req, res) => {
+  try {
+    const agents = harness.agentRegistry.listAll().map(a => ({
+      id: a.id, name: a.name, role: a.role, capabilities: a.capabilities, version: a.version,
+    }));
+    res.json({ code: 200, data: agents });
+  } catch (e: any) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+export default router;

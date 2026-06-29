@@ -1,0 +1,22 @@
+id: short-drama-production
+version: "1.0"
+config:
+  globalTimeoutMs: 1800000
+  parallelLimit: 3
+nodes:
+  - { id: screenwriter.generate, type: agent, agentRole: screenwriter, output: { keys: [script] }, config: { timeoutMs: 120000, retry: { maxRetries: 2, backoffMs: 10000, backoffMultiplier: 2, retryableErrors: [] } } }
+  - { id: review.script, type: review-gate, input: { bindings: { content: "${screenwriter.generate.script}" } }, config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: completeness, weight: 0.5, threshold: 0.75 }], passThreshold: 0.7, onReject: retry } } }
+  - { id: director.style, type: agent, agentRole: director, input: { bindings: { script: "${screenwriter.generate.script}" } }, output: { keys: [visualStyle] } }
+  - { id: director.storyboard, type: agent, agentRole: director, input: { bindings: { script: "${screenwriter.generate.script}" } }, output: { keys: [storyboardPlan] } }
+  - { id: generate.shots.fork, type: parallel-fork, input: { bindings: { items: "${director.storyboard.storyboardPlan.shots}" } }, config: { parallelDegree: 3 } }
+  - { id: generate.shot.unit, type: agent, agentRole: dp, input: { bindings: { shot: "${item}", style: "${director.style.visualStyle}" } }, output: { keys: [imageUrl] } }
+  - { id: generate.shots.join, type: parallel-join }
+  - { id: final.assemble, type: script, scriptId: final-render, input: { bindings: { shots: "${generate.shots.join}" } } }
+edges:
+  - { from: screenwriter.generate, to: review.script }
+  - { from: review.script, to: director.style }
+  - { from: director.style, to: director.storyboard }
+  - { from: director.storyboard, to: generate.shots.fork }
+  - { from: generate.shots.fork, to: generate.shot.unit }
+  - { from: generate.shot.unit, to: generate.shots.join }
+  - { from: generate.shots.join, to: final.assemble }

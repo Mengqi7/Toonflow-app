@@ -12,6 +12,7 @@ import { MCPConnector } from "./MCPConnector";
 import { ArtisticReviewer } from "@/review/ArtisticReviewer";
 import { ContentReviewer } from "@/review/ContentReviewer";
 import { TechnicalReviewer } from "@/review/TechnicalReviewer";
+type NodeStateString = string;
 
 export class WorkflowRunner extends EventEmitter {
   private graphs = new Map<string, Graph>();
@@ -148,9 +149,9 @@ export class WorkflowRunner extends EventEmitter {
             skillsRegistry: this.skillsRegistry, mcpConnector: this.mcpConnector,
             config: ctx.config,
           });
-          await agent.init(null as any);
-          const result = await agent.execute(null as any);
-          await agent.cleanup(null as any);
+          await agent.init(ctx as any);
+          const result = await agent.execute(ctx as any);
+          await agent.cleanup(ctx as any);
 
           if (node.config.reviewGate && result.success) {
             const reviewResult = await this.executeReviewGate(node, result.data, ctx);
@@ -240,7 +241,7 @@ export class WorkflowRunner extends EventEmitter {
       if (c.name.startsWith('tech_')) {
         // 技术审核
         const reviewer = new TechnicalReviewer();
-        const result = await reviewer.review(output.imageUrl || output.images?.[0] || '');
+        const result = await reviewer.review(output.imageUrl || output.images?.[0] || '', '');
         score = result.resolution;
       } else if (c.name === 'composition' || c.name === 'styleMatch' || c.name === 'lighting' || c.name === 'aesthetic') {
         // 艺术审核
@@ -297,9 +298,9 @@ export class WorkflowRunner extends EventEmitter {
           memoryBus: this.memoryBus, rulesEngine: this.rulesEngine,
           skillsRegistry: this.skillsRegistry, mcpConnector: this.mcpConnector, config: ctx.config,
         });
-        await agent.init(null as any);
-        const result = await agent.execute(null as any);
-        await agent.cleanup(null as any);
+        await agent.init(ctx as any);
+        const result = await agent.execute(ctx as any);
+        await agent.cleanup(ctx as any);
         if (result.success) return { nodeId, state: "completed", output: result.data };
       } catch { /* retry */ }
     }
@@ -383,5 +384,5 @@ export class WorkflowRunner extends EventEmitter {
 }
 
 function nodeStatesOrInit(instance: WorkflowInstance, nodeId: string, state: string): void {
-  if (!instance.nodeStates.has(nodeId)) instance.nodeStates.set(nodeId, state);
+  if (!instance.nodeStates.has(nodeId)) instance.nodeStates.set(nodeId, state as NodeState);
 }

@@ -173,14 +173,16 @@ export abstract class FilmAgent extends BaseAgent {
   ): Promise<ReviewScore> {
     const dw = { technical: 0.3, artistic: 0.4, contentMatch: 0.3 };
     
-    // 1. 技术审核
-    let technicalScores: Record<string, number> = { resolution: 0.9, artifacts: 0.85, colorSpace: 0.9, format: 1.0 };
+    // 1. Technical review
+    let technicalScores: ReviewScore["technical"] = { resolution: 0.9, artifacts: 0.85, colorSpace: 0.9, format: 1.0 };
     try {
       const techReviewer = new TechnicalReviewer();
       if (output?.imageUrl || output?.images) {
         const imageUrls = Array.isArray(output.images) ? output.images : [output.imageUrl].filter(Boolean);
         if (imageUrls.length > 0) {
-          const techResult = await techReviewer.review(imageUrls[0]);
+          const imgPath = imageUrls[0];
+          const fileName = imgPath.split("/").pop() || "image.png";
+          const techResult = await techReviewer.review(imgPath, fileName);
           technicalScores = { resolution: techResult.resolution, artifacts: techResult.artifacts, colorSpace: techResult.colorSpace, format: techResult.format };
         }
       }
