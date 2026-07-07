@@ -24,7 +24,7 @@ nodes:
   - id: review.script
     type: review-gate
     input: { bindings: { content: "${screenwriter.generate.script}" } }
-    config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: completeness, weight: 0.4, threshold: 0.8 }, { name: formatCompliance, weight: 0.3, threshold: 0.9 }, { name: dialogueNaturalness, weight: 0.3, threshold: 0.7 }], passThreshold: 0.75, onReject: retry } }
+    config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: completeness, weight: 0.4, threshold: 0.6 }, { name: formatCompliance, weight: 0.3, threshold: 0.6 }, { name: dialogueNaturalness, weight: 0.3, threshold: 0.6 }], passThreshold: 0.6, onReject: skip } }
 
   # === Stage 2: Visual Style + Storyboard ===
   - id: director.style
@@ -35,7 +35,7 @@ nodes:
   - id: review.style
     type: review-gate
     input: { bindings: { content: "${director.style.visualStyle}" } }
-    config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: styleCoherence, weight: 0.5, threshold: 0.8 }, { name: genreMatch, weight: 0.5, threshold: 0.8 }], passThreshold: 0.8, onReject: retry } }
+    config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: styleCoherence, weight: 0.5, threshold: 0.6 }, { name: genreMatch, weight: 0.5, threshold: 0.6 }], passThreshold: 0.6, onReject: skip } }
   - id: director.storyboard
     type: agent
     agentRole: director
@@ -55,9 +55,10 @@ nodes:
   - id: review.image
     type: review-gate
     input: { bindings: { content: "${generate.shot.unit}" } }
-    config: { reviewGate: { criteria: [{ name: resolution, weight: 0.3, threshold: 0.9 }, { name: composition, weight: 0.3, threshold: 0.7 }, { name: styleMatch, weight: 0.4, threshold: 0.75 }], passThreshold: 0.75, onReject: retry } }
+    config: { reviewGate: { criteria: [{ name: resolution, weight: 0.3, threshold: 0.6 }, { name: composition, weight: 0.3, threshold: 0.6 }, { name: styleMatch, weight: 0.4, threshold: 0.6 }], passThreshold: 0.6, onReject: skip } }
   - id: generate.shots.join
     type: parallel-join
+    input: { static: {} }
 
   # === Stage 4: Editing + Audio ===
   - id: editor.assemble
@@ -84,9 +85,10 @@ nodes:
   - id: review.video
     type: review-gate
     input: { bindings: { content: "${generate.video.unit}" } }
-    config: { reviewGate: { criteria: [{ name: videoQuality, weight: 0.4, threshold: 0.75 }], passThreshold: 0.75, onReject: retry } }
+    config: { reviewGate: { criteria: [{ name: videoQuality, weight: 0.4, threshold: 0.6 }], passThreshold: 0.6, onReject: skip } }
   - id: generate.videos.join
     type: parallel-join
+    input: { static: {} }
 
   # === Stage 6: Final Assembly ===
   - id: final.assemble

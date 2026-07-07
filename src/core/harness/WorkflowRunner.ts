@@ -2,17 +2,15 @@ import { Graph, alg as graphAlg } from "graphlib";
 import { EventEmitter } from "events";
 import type {
   WorkflowDefinition, WorkflowInstance, WorkflowContext, WorkflowResult,
-  WorkflowNode, WorkflowEdge, NodeState, NodeResult, AgentResult, RetryInstruction
+  WorkflowNode, WorkflowEdge, NodeState, NodeResult, AgentResult, RetryInstruction,
+  AgentContext
 } from "./types";
 import type { AgentRegistry } from "./AgentRegistry";
-import { MemoryBus } from "./MemoryBus";
-import { RulesEngine } from "./RulesEngine";
-import { SkillsRegistry } from "./SkillsRegistry";
-import { MCPConnector } from "./MCPConnector";
-import { ArtisticReviewer } from "@/review/ArtisticReviewer";
-import { ContentReviewer } from "@/review/ContentReviewer";
-import { TechnicalReviewer } from "@/review/TechnicalReviewer";
-type NodeStateString = string;
+import type { MemoryBus } from "./MemoryBus";
+import type { RulesEngine } from "./RulesEngine";
+import type { SkillsRegistry } from "./SkillsRegistry";
+import type { MCPConnector } from "./MCPConnector";
+import { ReviewPipeline } from "@/review/ReviewPipeline";
 
 export class WorkflowRunner extends EventEmitter {
   private graphs = new Map<string, Graph>();
@@ -20,12 +18,28 @@ export class WorkflowRunner extends EventEmitter {
   private instances = new Map<string, WorkflowInstance>();
   private agentRegistry!: AgentRegistry;
   private abortControllers = new Map<string, AbortController>();
-  private memoryBus = new MemoryBus();
-  private rulesEngine = new RulesEngine();
-  private skillsRegistry = new SkillsRegistry();
-  private mcpConnector = new MCPConnector();
+  // P0-2 fix: 使用 harness 全局单例，而非独立实例
+  private memoryBus!: MemoryBus;
+  private rulesEngine!: RulesEngine;
+  private skillsRegistry!: SkillsRegistry;
+  private mcpConnector!: MCPConnector;
+  private scriptExecutor!: any;
 
   setAgentRegistry(registry: AgentRegistry): void { this.agentRegistry = registry; }
+
+  /**
+   * P0-2 fix: 注入 harness 全局单例，确保 Agent 间共享记忆/规则/技能/MCP/脚本
+   */
+  setHarnessDeps(deps: {
+    memoryBus: MemoryBus; rulesEngine: RulesEngine;
+    skillsRegistry: SkillsRegistry; mcpConnector: MCPConnector; scriptExecutor?: any;
+  }): void {
+    this.memoryBus = deps.memoryBus;
+    this.rulesEngine = deps.rulesEngine;
+    this.skillsRegistry = deps.skillsRegistry;
+    this.mcpConnector = deps.mcpConnector;
+    this.scriptExecutor = deps.scriptExecutor;
+  }
 
   getDefinitions(): Map<string, WorkflowDefinition> { return this.definitions; }
 
@@ -81,24 +95,35 @@ export class WorkflowRunner extends EventEmitter {
   async execute(instance: WorkflowInstance): Promise<WorkflowResult> {
     this.instances.set(instance.id, instance);
     instance.status = "running";
-    instance.startedAt = Date.now();
+    instance.startedAt = instance.startedAt || Date.now();
 
     // P0: 保存初始状态到 DB (崩溃恢复)
     await this.saveInstanceState(instance);
 
+    // P1-5: 初始化重试预算
+    const defForBudget = this.definitions.get(instance.definitionId);
+    const totalBudget = defForBudget ? WorkflowRunner.computeTotalBudget(defForBudget) : 0;
+    if (totalBudget > 0) {
+      this.initRetryBudgets(instance.id, totalBudget);
+      console.log(`[WorkflowRunner] ${instance.id} initialized retry budget: ${totalBudget}`);
+    }
+
     const layers = this.resolveExecutionOrder(instance.definitionId);
-    const ac = new AbortController();
+    const ac = this.abortControllers.get(instance.id) || new AbortController();
     this.abortControllers.set(instance.id, ac);
 
     try {
       for (const layer of layers) {
         if (ac.signal.aborted) break;
+        // P1: 恢复时跳过已完成的节点
+        const pendingLayer = layer.filter(id => instance.nodeStates.get(id) !== "completed" && instance.nodeStates.get(id) !== "skipped");
+        if (pendingLayer.length === 0) continue;
         const results = await Promise.allSettled(
-          layer.map(nodeId => this.executeNode(nodeId, instance, ac.signal))
+          pendingLayer.map(nodeId => this.executeNode(nodeId, instance, ac.signal))
         );
-        for (let i = 0; i < layer.length; i++) {
+        for (let i = 0; i < pendingLayer.length; i++) {
           const r = results[i];
-          const nodeId = layer[i];
+          const nodeId = pendingLayer[i];
           if (r.status === "fulfilled") {
             const nr = r.value;
             if (nr.output) instance.context.data.set(nodeId, nr.output);
@@ -119,6 +144,8 @@ export class WorkflowRunner extends EventEmitter {
     instance.completedAt = Date.now();
     // P0: 最终状态持久化
     await this.saveInstanceState(instance);
+    // P1-5: 释放预算
+    this.releaseRetryBudget(instance.id);
     this.emit("workflow:complete", instance.id, instance.status);
     return { instanceId: instance.id, status: instance.status };
   }
@@ -134,27 +161,37 @@ export class WorkflowRunner extends EventEmitter {
     nodeStatesOrInit(instance, nodeId, "running");
     this.emit("node:state-change", nodeId, "running");
 
+    // P1 fix: 节点级别超时保护，防止 LLM 调用永久挂起
+    const nodeTimeoutMs = node.config.timeoutMs || 120000;
+    const nodeTimeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Node ${nodeId} timeout after ${nodeTimeoutMs}ms`)), nodeTimeoutMs)
+    );
+
     try {
       const boundInput = this.bindInputs(node, ctx);
 
-      switch (node.type) {
+      // P1 fix: 节点执行带超时保护
+      const executeWork = async (): Promise<NodeResult> => {
+        switch (node.type) {
         case "agent": {
           const agentRole = node.agentRole;
           if (!agentRole) return { nodeId, state: "failed", error: new Error("agent node missing agentRole") };
 
-          const agent = await this.agentRegistry.createInstance(agentRole, {
+          // P0 fix: 构建完整 AgentContext 并传递给 init/execute
+          const agentCtx: AgentContext = {
             instanceId: `${instance.id}:${nodeId}`, nodeId, projectId: ctx.projectId,
             input: boundInput, abortSignal: signal,
             memoryBus: this.memoryBus, rulesEngine: this.rulesEngine,
             skillsRegistry: this.skillsRegistry, mcpConnector: this.mcpConnector,
             config: ctx.config,
-          });
-          await agent.init(ctx as any);
-          const result = await agent.execute(ctx as any);
-          await agent.cleanup(ctx as any);
+          };
+          const agent = await this.agentRegistry.createInstance(agentRole, agentCtx);
+          await agent.init(agentCtx);
+          const result = await agent.execute(agentCtx);
+          await agent.cleanup(agentCtx);
 
           if (node.config.reviewGate && result.success) {
-            const reviewResult = await this.executeReviewGate(node, result.data, ctx);
+            const reviewResult = await this.executeReviewGate(node, result.data, ctx, instance.id);
             if (!reviewResult.passed) {
               return await this.retryNode(node, instance, signal, reviewResult);
             }
@@ -163,8 +200,26 @@ export class WorkflowRunner extends EventEmitter {
         }
         case "review-gate": {
           const data = boundInput.content || boundInput;
-          const reviewResult = await this.executeReviewGate(node, data, ctx);
-          return { nodeId, state: reviewResult.passed ? "completed" : "failed", output: reviewResult };
+          try {
+            const reviewResult = await this.executeReviewGate(node, data, ctx, instance.id);
+            console.log(`[WorkflowRunner] ${nodeId} review: passed=${reviewResult.passed}, score=${reviewResult.totalScore}`);
+            if (reviewResult.passed) {
+              return { nodeId, state: "completed", output: reviewResult };
+            }
+            const onReject = node.config.reviewGate?.onReject || "retry";
+            console.warn(`[WorkflowRunner] ${nodeId} review NOT passed (score=${reviewResult.totalScore}), onReject=${onReject}`);
+            if (onReject === "skip") {
+              return { nodeId, state: "skipped", output: reviewResult };
+            }
+            if (onReject === "pause") {
+              instance.status = "paused";
+              return { nodeId, state: "paused", output: reviewResult };
+            }
+            return { nodeId, state: "failed", output: reviewResult };
+          } catch (reviewErr: any) {
+            console.error(`[WorkflowRunner] ${nodeId} review CRASHED:`, reviewErr?.message || reviewErr);
+            return { nodeId, state: "failed", error: reviewErr };
+          }
         }
         case "parallel-fork": {
           const items = boundInput.items || [];
@@ -172,29 +227,70 @@ export class WorkflowRunner extends EventEmitter {
           const results: any[] = [];
           for (let i = 0; i < items.length; i += degree) {
             const batch = items.slice(i, i + degree);
-            const batchResults = await Promise.all(batch.map((item: any) => ({ item })));
+            const batchResults = await Promise.all(batch.map(async (item: any, bi: number) => {
+              const def = this.definitions.get(instance.definitionId);
+              const downEdges = def ? def.edges.filter((e: any) => e.from === nodeId) : [];
+              const workId = (downEdges.length > 0 ? downEdges[0].to : undefined) as string;
+              const wNode = workId && def ? def.nodes.find((n: any) => n.id === workId) : null;
+              if (!wNode || !wNode.agentRole) return { item };
+              try {
+                // P0-3 fix: 传递 currentItem 给 bindInputs 以支持 ${item}
+                const agentCtx: AgentContext = {
+                  instanceId: instance.id + ":" + nodeId + "-" + workId + "-" + bi,
+                  nodeId: workId, projectId: ctx.projectId,
+                  input: this.bindInputs(wNode, ctx, item),
+                  abortSignal: signal, memoryBus: this.memoryBus, rulesEngine: this.rulesEngine,
+                  skillsRegistry: this.skillsRegistry, mcpConnector: this.mcpConnector, config: ctx.config,
+                };
+                const agent = await this.agentRegistry.createInstance(wNode.agentRole, agentCtx);
+                await agent.init(agentCtx);
+                const result = await agent.execute(agentCtx);
+                await agent.cleanup(agentCtx);
+                return { item, result: result.data };
+              } catch(err) { return { item, error: String(err) }; }
+            }));
             results.push(...batchResults);
           }
           return { nodeId, state: "completed", output: { results } };
         }
         case "parallel-join": {
-          const upstream = ctx.data.get(node.input.bindings.from || "");
-          return { nodeId, state: "completed", output: upstream || { results: [] } };
+          // P1 fix: 合并所有上游 parallel-fork 的 results，输出统一为数组
+          let all: any[] = [];
+          ctx.data.forEach((val: any) => {
+            if (val && typeof val === "object") {
+              if (Array.isArray(val.results)) all = all.concat(val.results);
+              else if (Array.isArray(val)) all = all.concat(val);
+            }
+          });
+          return { nodeId, state: "completed", output: all };
         }
         case "script": {
+          const scriptId = (node as any).scriptId;
+          if (scriptId && this.scriptExecutor) {
+            const script = this.scriptExecutor.getScript(scriptId);
+            if (!script) throw new Error(`Script '${scriptId}' not found`);
+            const scriptOutput = await this.scriptExecutor.execute(script, boundInput);
+            return { nodeId, state: "completed", output: scriptOutput };
+          }
           return { nodeId, state: "completed", output: boundInput };
         }
         default:
           return { nodeId, state: "completed", output: boundInput };
-      }
+        }
+      }; // end executeWork
+
+      return await Promise.race([executeWork(), nodeTimeout]);
     } catch (err: any) {
+      console.error(`[WorkflowRunner] Node ${nodeId} failed:`, err?.message || err);
       return { nodeId, state: "failed", error: err };
     }
   }
 
   // ── 绑定输入 ─────────────────────────────────────
   resolvePath(path: string, ctx: WorkflowContext): any {
+    // P1 fix: 支持数组下标，如 "a.b[0].c"
     const parts = path.split(".");
+    // 先尝试从 data map 解析（保持向后兼容）
     for (let i = parts.length; i >= 1; i--) {
       const nodeId = parts.slice(0, i).join(".");
       const remaining = parts.slice(i);
@@ -202,83 +298,107 @@ export class WorkflowRunner extends EventEmitter {
       if (nodeData !== undefined) {
         let current: any = nodeData;
         for (const key of remaining) {
-          if (current && typeof current === "object") current = current[key];
-          else return undefined;
+          if (current == null) return undefined;
+          // P1 fix: 支持数组下标 [N]
+          const arrMatch = key.match(/^(\w+)\[(\d+)\]$/);
+          if (arrMatch) {
+            const arrKey = arrMatch[1];
+            const idx = parseInt(arrMatch[2], 10);
+            current = current[arrKey];
+            if (Array.isArray(current)) current = current[idx];
+            else return undefined;
+          } else if (current && typeof current === "object") {
+            current = current[key];
+          } else {
+            return undefined;
+          }
         }
         return current;
       }
     }
-    return undefined;
+    // 回退到 ctx.config（支持 ${config.xxx} 绑定）
+    if (path.startsWith("config.")) {
+      const key = path.slice(7);
+      return ctx.config[key];
+    }
+    // 最后尝试直接从 ctx.config 查找
+    return ctx.config[path];
   }
 
-  public bindInputs(node: WorkflowNode, ctx: WorkflowContext): Record<string, any> {
-    const result: Record<string, any> = { ...node.input.static };
-    for (const [key, path] of Object.entries(node.input.bindings)) {
+  /**
+   * P0-3 fix: 支持 ${item} 特殊变量（parallel-fork 场景）
+   * @param currentItem 当前批次的 item（仅 parallel-fork 时传入）
+   */
+  public bindInputs(node: WorkflowNode, ctx: WorkflowContext, currentItem?: any): Record<string, any> {
+    // P1 fix: 防御 node.input 为空（parallel-join/script 节点可能无 input）
+    const staticInput = (node.input?.static) || {};
+    const bindings = (node.input?.bindings) || {};
+    const result: Record<string, any> = { ...staticInput };
+    for (const [key, path] of Object.entries(bindings)) {
       const clean = (path as string).replace(/\$\{([^}]+)\}/g, "$1");
+      // P0-3 fix: 支持 ${item} 特殊变量
+      if (clean === "item" && currentItem !== undefined) {
+        result[key] = currentItem;
+        continue;
+      }
       const value = this.resolvePath(clean, ctx);
       if (value !== undefined) result[key] = value;
     }
     return result;
   }
 
-  // ── 执行审核关卡 — P1 fix: 使用 AI Reviewer 替代硬编码 ─────────────
-  private async executeReviewGate(node: WorkflowNode, output: any, _ctx: WorkflowContext): Promise<any> {
+  // ── 执行审核关卡 — P1-3: 使用 harness 全局 ReviewPipeline，注入 RulesEngine + MemoryBus ─
+  private async executeReviewGate(node: WorkflowNode, output: any, _ctx: WorkflowContext, instanceId: string): Promise<any> {
     if (!node.config.reviewGate) return { passed: true };
     const gate = node.config.reviewGate;
 
-    let totalScore = 0;
-    const scores: Record<string, number> = {};
-    
-    // P1: 尝试用 AI Reviewer 评分
-    const aiEvaluate = async (prompt: string): Promise<string> => {
-      // 使用 MemoryBus 中的规则引擎获取审核 prompt
-      return Promise.resolve("{}" ); // placeholder for now
-    };
-
-    for (const c of gate.criteria) {
-      let score: number;
-      
-      if (c.name.startsWith('tech_')) {
-        // 技术审核
-        const reviewer = new TechnicalReviewer();
-        const result = await reviewer.review(output.imageUrl || output.images?.[0] || '', '');
-        score = result.resolution;
-      } else if (c.name === 'composition' || c.name === 'styleMatch' || c.name === 'lighting' || c.name === 'aesthetic') {
-        // 艺术审核
-        const reviewer = new ArtisticReviewer();
-        const result = await reviewer.review(
-          output.imageUrl || '', 
-          undefined,
-          aiEvaluate
-        );
-        score = (result as any)[c.name] || 0.75;
-      } else {
-        // 内容审核
-        const reviewer = new ContentReviewer();
-        const result = await reviewer.review(
-          output.description || '',
-          output.referenceDescription || '',
-          aiEvaluate
-        );
-        score = (result as any)[c.name] || 0.85;
-      }
-      
-      if (!isNaN(score)) {
-        scores[c.name] = score;
-        totalScore += score * c.weight;
-      } else {
-        scores[c.name] = 0.75; // fallback
-        totalScore += 0.75 * c.weight;
-      }
+    // P1-3: 复用 harness 全局 pipeline（避免每次 new 一个无法共享 rulesEngine）
+    const pipeline = WorkflowRunner.sharedReviewPipeline;
+    if (!pipeline) {
+      console.warn("[WorkflowRunner] ReviewPipeline not initialized, skipping review-gate");
+      return { passed: true };
     }
-    
-    const passed = totalScore >= gate.passThreshold;
+
+    // 尝试找出该节点的源 agentRole (从 instance.definitionId 获取节点定义)
+    const def = this.definitions.get(instanceId.split(":")[0]) || [...this.definitions.values()].find(d => d.nodes.some(n => n.id === node.id));
+    const nodeDef = def?.nodes.find(n => n.id === node.id);
+    const upstreamAgent = this.findUpstreamAgent(def, node.id) || "unknown";
+    const criteria = gate.criteria.length > 0 ? gate.criteria : pipeline.loadCriteriaForAgent(upstreamAgent).criteria;
+
+    const result = await pipeline.review(
+      upstreamAgent,
+      output,
+      _ctx,
+    );
+
     return {
-      passed,
-      totalScore: Math.round(totalScore * 100) / 100,
-      scores,
-      feedback: passed ? undefined : `Score ${totalScore.toFixed(2)} < threshold ${gate.passThreshold}`,
+      passed: result.passed,
+      totalScore: result.overall,
+      scores: result,
+      feedback: result.feedback,
+      agentId: upstreamAgent,
+      criteria: criteria.map(c => c.name),
     };
+  }
+
+  /** 查找节点的最近上游 agentRole */
+  private findUpstreamAgent(def: WorkflowDefinition | undefined, nodeId: string): string | null {
+    if (!def) return null;
+    const incoming = def.edges.filter(e => e.to === nodeId);
+    for (const e of incoming) {
+      const upstream = def.nodes.find(n => n.id === e.from);
+      if (upstream?.agentRole) return upstream.agentRole;
+      const deeper = this.findUpstreamAgent(def, upstream?.id || "");
+      if (deeper) return deeper;
+    }
+    return null;
+  }
+
+  // P1-3: 全局共享 ReviewPipeline 单例
+  static sharedReviewPipeline: ReviewPipeline | null = null;
+
+  static initReviewPipeline(pipeline: ReviewPipeline): void {
+    WorkflowRunner.sharedReviewPipeline = pipeline;
   }
 
   // ── 重试节点 ─────────────────────────────────────
@@ -287,24 +407,76 @@ export class WorkflowRunner extends EventEmitter {
   ): Promise<NodeResult> {
     const nodeId = node.id;
     const ctx = instance.context;
-    for (let attempt = 1; attempt <= node.config.retry.maxRetries; attempt++) {
+    const maxRetries = node.config.retry.maxRetries;
+    const budget = node.config.globalRetryBudget;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      // P1-5: 预算检查
+      if (budget !== undefined && !node.config.criticalNode) {
+        const remaining = this.getRetryBudget(instance.id);
+        if (remaining <= 0) {
+          console.warn(`[WorkflowRunner] ${instance.id} ${nodeId}: global retry budget exhausted, skipping remaining retries`);
+          // 非关键节点 — 跳过重试，标记为 skipped 而非 failed
+          return { nodeId, state: "skipped", output: reviewResult };
+        }
+        this.consumeRetryBudget(instance.id, 1);
+      }
+
       const backoff = node.config.retry.backoffMs * Math.pow(node.config.retry.backoffMultiplier, attempt - 1);
       await new Promise(r => setTimeout(r, backoff));
       try {
-        const agent = await this.agentRegistry.createInstance(node.agentRole!, {
+        // P0 fix: 传递 AgentContext 给 init/execute
+        const agentCtx: AgentContext = {
           instanceId: `${instance.id}:${nodeId}-r${attempt}`, nodeId, projectId: ctx.projectId,
           input: { ...this.bindInputs(node, ctx), retryInstruction: reviewResult },
           abortSignal: signal,
           memoryBus: this.memoryBus, rulesEngine: this.rulesEngine,
           skillsRegistry: this.skillsRegistry, mcpConnector: this.mcpConnector, config: ctx.config,
-        });
-        await agent.init(ctx as any);
-        const result = await agent.execute(ctx as any);
-        await agent.cleanup(ctx as any);
+        };
+        const agent = await this.agentRegistry.createInstance(node.agentRole!, agentCtx);
+        await agent.init(agentCtx);
+        const result = await agent.execute(agentCtx);
+        await agent.cleanup(agentCtx);
         if (result.success) return { nodeId, state: "completed", output: result.data };
       } catch { /* retry */ }
     }
-    return { nodeId, state: "failed", error: new Error(`Max retries (${node.config.retry.maxRetries}) exceeded`) };
+    return { nodeId, state: "failed", error: new Error(`Max retries (${maxRetries}) exceeded (budget: ${budget ?? "unlimited"})`) };
+  }
+
+  // ── P1-5: 重试预算管理 ────────────────────────────
+  private retryBudgets = new Map<string, number>();  // instanceId -> remaining
+
+  /** 初始化预算 (在 execute() 开始时调用) */
+  initRetryBudgets(instanceId: string, totalBudget: number): void {
+    this.retryBudgets.set(instanceId, totalBudget);
+  }
+
+  /** 释放预算 (实例结束后清理) */
+  releaseRetryBudget(instanceId: string): void {
+    this.retryBudgets.delete(instanceId);
+  }
+
+  /** 获取剩余预算 */
+  getRetryBudget(instanceId: string): number {
+    return this.retryBudgets.get(instanceId) ?? Infinity;
+  }
+
+  /** 消耗 1 单位预算 */
+  consumeRetryBudget(instanceId: string, n: number = 1): number {
+    const cur = this.retryBudgets.get(instanceId);
+    if (cur === undefined) return Infinity;
+    const next = Math.max(0, cur - n);
+    this.retryBudgets.set(instanceId, next);
+    return next;
+  }
+
+  /** 累加全局预算 (从所有节点的 globalRetryBudget 求和) */
+  static computeTotalBudget(def: WorkflowDefinition): number {
+    let total = 0;
+    for (const node of def.nodes) {
+      if (node.config.globalRetryBudget !== undefined) total += node.config.globalRetryBudget;
+    }
+    return total;
   }
 
   // ── 暂停 / 恢复 / 取消 ──────────────────────────

@@ -14,15 +14,26 @@ export class AgentRegistry {
         const absolutePath = path.resolve(entry);
         const fileUrl = pathToFileURL(absolutePath).href;
         const mod: any = await import(fileUrl as string);
-        let desc: AgentDescriptor | undefined = mod?.default;
-        if (!desc) desc = mod?.descriptor;
-        if (!desc) desc = mod?.agent;
 
-        if (desc && desc.id) {
-          this.agents.set(desc.id, desc);
-          console.log("[AgentRegistry] Registered: " + desc.id + " (" + desc.name + ") [" + desc.capabilities.join(", ") + "]");
-          loaded++;
+        // V2: 支持 descriptors 数组 (一个 index.ts 导出多个 Agent)
+        const descs: AgentDescriptor[] = [];
+        if (Array.isArray(mod?.descriptors)) {
+          descs.push(...mod.descriptors);
         } else {
+          let desc: AgentDescriptor | undefined = mod?.default;
+          if (!desc) desc = mod?.descriptor;
+          if (!desc) desc = mod?.agent;
+          if (desc) descs.push(desc);
+        }
+
+        for (const desc of descs) {
+          if (desc && desc.id) {
+            this.agents.set(desc.id, desc);
+            console.log("[AgentRegistry] Registered: " + desc.id + " (" + desc.name + ") [" + desc.capabilities.join(", ") + "]");
+            loaded++;
+          }
+        }
+        if (descs.length === 0) {
           console.warn("[AgentRegistry] Skipping " + entry + ": no valid descriptor");
         }
       } catch (err) {

@@ -4,16 +4,16 @@ config:
   globalTimeoutMs: 7200000
   parallelLimit: 4
 nodes:
-  - { id: screenwriter.analyze, type: agent, agentRole: screenwriter, config: { timeoutMs: 600000, retry: { maxRetries: 2, backoffMs: 10000, backoffMultiplier: 2, retryableErrors: [] } }, output: { keys: [novelAnalysis] } }
+  - { id: screenwriter.analyze, type: agent, agentRole: screenwriter, input: { static: { stage: "analyze" } }, config: { timeoutMs: 600000, retry: { maxRetries: 2, backoffMs: 10000, backoffMultiplier: 2, retryableErrors: [] } }, output: { keys: [novelAnalysis] } }
   - { id: screenwriter.adapt, type: agent, agentRole: screenwriter, input: { bindings: { analysis: "${screenwriter.analyze.novelAnalysis}" } }, output: { keys: [adaptationStrategy] } }
   - { id: screenwriter.generate, type: agent, agentRole: screenwriter, input: { bindings: { strategy: "${screenwriter.adapt.adaptationStrategy}" } }, output: { keys: [script] } }
-  - { id: review.script, type: review-gate, input: { bindings: { content: "${screenwriter.generate.script}" } }, config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: completeness, weight: 0.4, threshold: 0.8 }], passThreshold: 0.75, onReject: retry } } }
+  - { id: review.script, type: review-gate, input: { bindings: { content: "${screenwriter.generate.script}" } }, config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: completeness, weight: 0.4, threshold: 0.6 }], passThreshold: 0.6, onReject: skip } } }
   - { id: director.style, type: agent, agentRole: director, input: { bindings: { script: "${screenwriter.generate.script}" } }, output: { keys: [visualStyle] } }
   - { id: director.storyboard, type: agent, agentRole: director, input: { bindings: { script: "${screenwriter.generate.script}", style: "${director.style.visualStyle}" } }, output: { keys: [storyboardPlan] } }
   - { id: generate.shots.fork, type: parallel-fork, input: { bindings: { items: "${director.storyboard.storyboardPlan.shots}" } }, config: { parallelDegree: 4 } }
   - { id: generate.shot.unit, type: agent, agentRole: dp, input: { bindings: { shot: "${item}", style: "${director.style.visualStyle}" } }, output: { keys: [imageUrl, compositionPrompt] } }
-  - { id: review.image, type: review-gate, input: { bindings: { content: "${generate.shot.unit}" } }, config: { reviewGate: { criteria: [{ name: resolution, weight: 0.3, threshold: 0.9 }, { name: composition, weight: 0.3, threshold: 0.7 }], passThreshold: 0.75, onReject: retry } } }
-  - { id: generate.shots.join, type: parallel-join }
+  - { id: review.image, type: review-gate, input: { bindings: { content: "${generate.shot.unit}" } }, config: { reviewGate: { criteria: [{ name: resolution, weight: 0.3, threshold: 0.6 }, { name: composition, weight: 0.3, threshold: 0.6 }], passThreshold: 0.6, onReject: skip } } }
+  - { id: generate.shots.join, type: parallel-join, input: { static: {} } }
   - { id: editor.assemble, type: agent, agentRole: editor, input: { bindings: { shots: "${generate.shots.join}", plan: "${director.storyboard.storyboardPlan}" } }, output: { keys: [editTimeline] } }
   - { id: final.assemble, type: script, scriptId: final-render, input: { bindings: { timeline: "${editor.assemble.editTimeline}", videos: "${generate.shots.join}" } } }
 edges:

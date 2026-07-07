@@ -1,12 +1,15 @@
 {
   "ignore": [
     "node_modules",
-    "data/*",
+    "data/oss/*",
+    "data/assets/*",
+    "data/db2.sqlite",
     "build/*",
     "dist/*",
     "router.ts",
     "database.d.ts"
   ],
+  "ext": "ts,json,yaml,yml",
   "events": {
     "restart": ""
   },

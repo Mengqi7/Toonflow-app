@@ -1,10 +1,12 @@
-import u from "@/utils";
 import path from "path";
 import fs from "fs";
 import { Knex } from "knex";
 import db from "@/utils/db";
 import { transform } from "sucrase";
 import rawVendorData from "./vendor.json";
+import getPath from "@/utils/getPath";
+import vmFn from "@/utils/vm";
+import * as vendor from "@/utils/vendor";
 
 const vendorData = rawVendorData as Record<string, string>;
 
@@ -68,9 +70,9 @@ export default async (knex: Knex): Promise<void> => {
   await addColumn("o_assets", "audioBindState", "integer");
   await addColumn("o_modelPrompt", "fileName", "string");
   await addColumn("o_modelPrompt", "path", "string");
-  const vendorDataSelect = await u.db("o_vendorConfig").whereIn("id", ["deepseek", "atlascloud"]).select("*");
+  const vendorDataSelect = await db("o_vendorConfig").whereIn("id", ["deepseek", "atlascloud"]).select("*");
   if (!vendorDataSelect.find((i) => i.id == "deepseek")) {
-    await u.db("o_vendorConfig").insert({
+    await db("o_vendorConfig").insert({
       id: "deepseek",
       inputValues: "{}",
       models: "[]",
@@ -78,7 +80,7 @@ export default async (knex: Knex): Promise<void> => {
     });
   }
   if (!vendorDataSelect.find((i) => i.id == "atlascloud")) {
-    await u.db("o_vendorConfig").insert({
+    await db("o_vendorConfig").insert({
       id: "atlascloud",
       inputValues: "{}",
       models: "[]",
@@ -94,16 +96,15 @@ export default async (knex: Knex): Promise<void> => {
       data: `你是一个音色匹配助手。\n你的任务是：根据给定角色资产的名称与描述，从候选音频列表中选出最合适的音色。\n匹配规则：\n1. 优先根据角色性别、年龄、性格等特征与音色描述进行语义匹配；\n2. 同一角色仅可匹配一个音色；\n3. 若候选列表中没有合适的音色，则无需返回 audioId；`,
     });
   //检测o_setting是否有agentUseMode
-  const agentUserMode = await u.db("o_setting").where("key", "agentUseMode").first();
+  const agentUserMode = await db("o_setting").where("key", "agentUseMode").first();
   if (!agentUserMode) {
-    const allDeployData = await u
-      .db("o_agentDeploy")
+    const allDeployData = await db("o_agentDeploy")
       .leftJoin("o_vendorConfig", "o_vendorConfig.id", "o_agentDeploy.vendorId")
       .select("o_agentDeploy.*");
     const advancedData = allDeployData.filter((item: any) => item.key?.includes(":"));
     const notValModelData = advancedData.filter((item) => !item.modelName);
 
-    await u.db("o_setting").insert({
+    await db("o_setting").insert({
       key: "agentUseMode",
       value: notValModelData.length ? "0" : "1",
     });
@@ -153,7 +154,7 @@ export default async (knex: Knex): Promise<void> => {
   for (const item of data) {
     let { id, code } = item;
     const filename = `${id}.ts`;
-    const rootDir = u.getPath("vendor");
+    const rootDir = getPath("vendor");
     if (!code && fs.existsSync(path.join(rootDir, filename))) continue;
     if (!fs.existsSync(rootDir)) fs.mkdirSync(rootDir, { recursive: true });
     if (!fs.existsSync(path.join(rootDir, filename))) {
@@ -178,31 +179,31 @@ export default async (knex: Knex): Promise<void> => {
   await dropColumn("o_vendorConfig", "inputs");
   await dropColumn("o_vendorConfig", "createTime");
 
-  const volcengineVer = await u.vendor.getVendor("volcengine").version;
+  const volcengineVer = await vendor.getVendor("volcengine").version;
   if (Number(volcengineVer) < 2.4) {
-    u.vendor.writeCode("volcengine", vendorData["volcengine.ts"]);
+    vendor.writeCode("volcengine", vendorData["volcengine.ts"]);
   }
-  const minimaxVer = await u.vendor.getVendor("minimax").version;
+  const minimaxVer = await vendor.getVendor("minimax").version;
   if (Number(minimaxVer) < 2.1) {
-    u.vendor.writeCode("minimax", vendorData["minimax.ts"]);
+    vendor.writeCode("minimax", vendorData["minimax.ts"]);
   }
-  const toonflowVer = await u.vendor.getVendor("toonflow").version;
+  const toonflowVer = await vendor.getVendor("toonflow").version;
   if (Number(toonflowVer) < 3.2) {
-    u.vendor.writeCode("toonflow", vendorData["toonflow.ts"]);
+    vendor.writeCode("toonflow", vendorData["toonflow.ts"]);
   }
 };
 
 async function tempOnsert(tsCode: string) {
   const jsCode = transform(tsCode, { transforms: ["typescript"] }).code;
-  const exports = u.vm(jsCode);
-  const vendor = exports.vendor;
-  const data = await u.db("o_vendorConfig").where("id", vendor.id).first();
+  const exports = vmFn(jsCode);
+  const vendorDef = exports.vendor;
+  const data = await db("o_vendorConfig").where("id", vendorDef.id).first();
   if (data) return;
-  await u.db("o_vendorConfig").insert({
-    id: vendor.id,
-    inputValues: JSON.stringify(vendor.inputValues ?? {}),
+  await db("o_vendorConfig").insert({
+    id: vendorDef.id,
+    inputValues: JSON.stringify(vendorDef.inputValues ?? {}),
     models: JSON.stringify([]),
-    enable: vendor.id == "toonflow" ? 1 : 0,
+    enable: vendorDef.id == "toonflow" ? 1 : 0,
   });
-  u.vendor.writeCode(vendor.id, tsCode);
+  vendor.writeCode(vendorDef.id, tsCode);
 }

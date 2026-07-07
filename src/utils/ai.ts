@@ -67,7 +67,9 @@ async function resolveModelName(value: AiType | `${string}:${string}`): Promise<
     let modelName = null;
 
     if (!agentDeployData?.modelName) {
-      const [mainly] = agentDeployData!.key!.split(/:(.+)/);
+      // P1 fix: 防御 agentDeployData 为 null
+      if (!agentDeployData) throw new Error(`未找到部署配置 ${value}`);
+      const [mainly] = agentDeployData.key!.split(/:(.+)/);
       const mainlyData = await u.db("o_agentDeploy").where("key", mainly).first();
       if (!mainlyData?.modelName) throw new Error(`未找到部署配置 ${value}`);
       modelName = mainlyData.modelName;

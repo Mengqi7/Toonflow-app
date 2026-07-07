@@ -1,4 +1,4 @@
-// @db-hash c8997fc035f5a86a2b8516ee4b168e27
+// @db-hash e2fe88940f377b6e62dd1c4c2fb7f2ab
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -34,6 +34,20 @@ export interface o_agentWorkData {
   'key'?: string | null;
   'projectId'?: number | null;
   'updateTime'?: number | null;
+}
+export interface o_artifact_version {
+  'artifactKey': string;
+  'artifactType': string;
+  'content'?: string | null;
+  'createdAt': number;
+  'filePath'?: string | null;
+  'id'?: number | null;
+  'instanceId': string;
+  'projectId': number;
+  'reviewFeedback'?: string | null;
+  'reviewScore'?: string | null;
+  'source'?: string | null;
+  'version': number;
 }
 export interface o_artStyle {
   'fileUrl'?: string | null;
@@ -100,6 +114,15 @@ export interface o_comfyui_workflow {
   'updateTime'?: number | null;
   'workflow_json'?: string | null;
 }
+export interface o_comfyui_workflow_version {
+  'changedParams'?: string | null;
+  'createdBy'?: string | null;
+  'createTime'?: number | null;
+  'id'?: number | null;
+  'version'?: number | null;
+  'workflow_json': string;
+  'workflowId'?: number | null;
+}
 export interface o_event {
   'createTime'?: number | null;
   'detail'?: string | null;
@@ -154,6 +177,19 @@ export interface o_novel {
   'projectId'?: number | null;
   'reel'?: string | null;
 }
+export interface o_production_asset {
+  'assetType'?: string | null;
+  'assetUrl'?: string | null;
+  'createTime'?: number | null;
+  'id'?: number | null;
+  'instanceId'?: string | null;
+  'nodeId'?: string | null;
+  'projectId'?: number | null;
+  'reviewScore'?: number | null;
+  'status'?: string | null;
+  'updateTime'?: number | null;
+  'version'?: number | null;
+}
 export interface o_project {
   'artStyle'?: string | null;
   'createTime'?: number | null;
@@ -177,6 +213,16 @@ export interface o_prompt {
   'type'?: string | null;
   'useData'?: string | null;
 }
+export interface o_prop_library {
+  'createTime'?: number | null;
+  'description'?: string | null;
+  'id'?: number | null;
+  'instanceId'?: string | null;
+  'name': string;
+  'projectId'?: number | null;
+  'source'?: string | null;
+  'type': string;
+}
 export interface o_review_preference {
   'confidence'?: number | null;
   'criterion'?: string | null;
@@ -199,6 +245,17 @@ export interface o_review_report {
   'targetType'?: string | null;
   'totalScore'?: number | null;
   'workflowInstanceId'?: string | null;
+}
+export interface o_scene_library {
+  'artDirection'?: string | null;
+  'createTime'?: number | null;
+  'id'?: number | null;
+  'instanceId'?: string | null;
+  'lightingSpec'?: string | null;
+  'projectId'?: number | null;
+  'sceneName': string;
+  'source'?: string | null;
+  'updateTime'?: number | null;
 }
 export interface o_script {
   'content'?: string | null;
@@ -249,6 +306,16 @@ export interface o_storyboard {
   'track'?: string | null;
   'trackId'?: number | null;
   'videoDesc'?: string | null;
+}
+export interface o_style_library {
+  'createTime'?: number | null;
+  'description'?: string | null;
+  'id'?: number | null;
+  'name': string;
+  'projectId'?: number | null;
+  'tags'?: string | null;
+  'updateTime'?: number | null;
+  'visualStyleSpec'?: string | null;
 }
 export interface o_tasks {
   'describe'?: string | null;
@@ -304,11 +371,22 @@ export interface o_workflow_state {
   'status'?: string;
   'userId'?: number | null;
 }
+export interface o_workflow_template {
+  'category'?: string | null;
+  'createTime'?: number | null;
+  'definition': string;
+  'description'?: string | null;
+  'id'?: string | null;
+  'isBuiltin'?: number | null;
+  'name': string;
+  'updateTime'?: number | null;
+}
 
 export interface DB {
   "memories": memories;
   "o_agentDeploy": o_agentDeploy;
   "o_agentWorkData": o_agentWorkData;
+  "o_artifact_version": o_artifact_version;
   "o_artStyle": o_artStyle;
   "o_assets": o_assets;
   "o_assets2Storyboard": o_assets2Storyboard;
@@ -316,6 +394,7 @@ export interface DB {
   "o_character_library": o_character_library;
   "o_comfyui_server": o_comfyui_server;
   "o_comfyui_workflow": o_comfyui_workflow;
+  "o_comfyui_workflow_version": o_comfyui_workflow_version;
   "o_event": o_event;
   "o_eventChapter": o_eventChapter;
   "o_image": o_image;
@@ -323,20 +402,25 @@ export interface DB {
   "o_memory": o_memory;
   "o_modelPrompt": o_modelPrompt;
   "o_novel": o_novel;
+  "o_production_asset": o_production_asset;
   "o_project": o_project;
   "o_prompt": o_prompt;
+  "o_prop_library": o_prop_library;
   "o_review_preference": o_review_preference;
   "o_review_report": o_review_report;
+  "o_scene_library": o_scene_library;
   "o_script": o_script;
   "o_scriptAssets": o_scriptAssets;
   "o_setting": o_setting;
   "o_skillAttribution": o_skillAttribution;
   "o_skillList": o_skillList;
   "o_storyboard": o_storyboard;
+  "o_style_library": o_style_library;
   "o_tasks": o_tasks;
   "o_user": o_user;
   "o_vendorConfig": o_vendorConfig;
   "o_video": o_video;
   "o_videoTrack": o_videoTrack;
   "o_workflow_state": o_workflow_state;
+  "o_workflow_template": o_workflow_template;
 }

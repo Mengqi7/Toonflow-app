@@ -1,7 +1,8 @@
-import express from "express";
-import { v4 as uuid } from "uuid";
-import { harness } from "@/core/harness/init";
-import type { WorkflowInstance } from "@/core/harness/types";
+ import express from "express";
+ import { v4 as uuid } from "uuid";
+ import { harness } from "@/core/harness/init";
+ import type { WorkflowInstance } from "@/core/harness/types";
+ import { db } from "@/utils/db";
 
 const router = express.Router();
 
@@ -128,6 +129,48 @@ router.get("/agents", async (_req, res) => {
     res.json({ code: 200, data: agents });
   } catch (e: any) {
     res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+
+// 获取工作流定义详情 (供前端DAG渲染)
+router.get("/workflow/:id/definition", async (req: any, res: any) => {
+  try {
+    const defs = harness.workflowRunner.getDefinitions();
+    const def = defs.get(req.params.id);
+    if (!def) return res.status(404).json({ code: 404, message: "Workflow definition not found" });
+    res.json({
+      code: 200,
+      data: {
+        id: def.id, version: def.version,
+        nodes: def.nodes.map((n: any) => ({
+          id: n.id, type: n.type, agentRole: n.agentRole,
+          config: { timeoutMs: n.config.timeoutMs, parallelDegree: n.config.parallelDegree },
+          outputKeys: n.output?.keys || [],
+        })),
+        edges: def.edges.map((e: any) => ({ from: e.from, to: e.to })),
+      },
+    });
+  } catch (e: any) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+// 获取实例列表 (从 DB 读取 ALL instances)
+router.get("/instances", async (_req, res) => {
+  try {
+    const rows = await db("o_workflow_state").orderBy("startedAt", "desc").limit(50);
+    const list = rows.map((row: any) => ({
+      id: row.id,
+      definitionId: row.definitionId,
+      status: row.status,
+      nodeStates: row.nodeStates ? JSON.parse(row.nodeStates) : {},
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+    }));
+    res.json({ code: 200, data: list });
+  } catch (e: any) {
+    res.json({ code: 200, data: [] });
   }
 });
 

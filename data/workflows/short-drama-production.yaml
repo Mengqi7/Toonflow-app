@@ -4,19 +4,58 @@ config:
   globalTimeoutMs: 1800000
   parallelLimit: 3
 nodes:
-  - { id: screenwriter.generate, type: agent, agentRole: screenwriter, output: { keys: [script] }, config: { timeoutMs: 120000, retry: { maxRetries: 2, backoffMs: 10000, backoffMultiplier: 2, retryableErrors: [] } } }
-  - { id: review.script, type: review-gate, input: { bindings: { content: "${screenwriter.generate.script}" } }, config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: completeness, weight: 0.5, threshold: 0.75 }], passThreshold: 0.7, onReject: retry } } }
-  - { id: director.style, type: agent, agentRole: director, input: { bindings: { script: "${screenwriter.generate.script}" } }, output: { keys: [visualStyle] } }
-  - { id: director.storyboard, type: agent, agentRole: director, input: { bindings: { script: "${screenwriter.generate.script}" } }, output: { keys: [storyboardPlan] } }
-  - { id: generate.shots.fork, type: parallel-fork, input: { bindings: { items: "${director.storyboard.storyboardPlan.shots}" } }, config: { parallelDegree: 3 } }
-  - { id: generate.shot.unit, type: agent, agentRole: dp, input: { bindings: { shot: "${item}", style: "${director.style.visualStyle}" } }, output: { keys: [imageUrl] } }
-  - { id: generate.shots.join, type: parallel-join }
-  - { id: final.assemble, type: script, scriptId: final-render, input: { bindings: { shots: "${generate.shots.join}" } } }
+  # === Stage 1: Script Generation ===
+  - id: screenwriter.generate
+    type: agent
+    agentRole: screenwriter
+    input: { static: { stage: "generate" }, bindings: { novel: "${novel}", strategy: "${screenwriter.generate.novelAnalysis}" } }
+    output: { keys: [script] }
+    config: { timeoutMs: 300000, retry: { maxRetries: 2, backoffMs: 10000, backoffMultiplier: 2, retryableErrors: [] } }
+
+  - id: review.script
+    type: review-gate
+    input: { bindings: { content: "${screenwriter.generate.script}" } }
+    config: { reviewGate: { reviewerAgentId: director, criteria: [{ name: completeness, weight: 0.5, threshold: 0.5 }], passThreshold: 0.6, onReject: skip } }
+
+  # === Stage 2: Visual Style + Storyboard ===
+  - id: director.style
+    type: agent
+    agentRole: director
+    input: { bindings: { script: "${screenwriter.generate.script}" }, static: { stage: "style" } }
+    output: { keys: [visualStyle] }
+    config: { timeoutMs: 120000, retry: { maxRetries: 2, backoffMs: 10000, backoffMultiplier: 2, retryableErrors: [] } }
+
+  - id: director.storyboard
+    type: agent
+    agentRole: director
+    input: { bindings: { script: "${screenwriter.generate.script}", style: "${director.style.visualStyle}" }, static: { stage: "storyboard" } }
+    output: { keys: [storyboardPlan] }
+    config: { timeoutMs: 300000, retry: { maxRetries: 2, backoffMs: 10000, backoffMultiplier: 2, retryableErrors: [] } }
+
+  # === Stage 3: Image Generation (simplified: sequential DP node) ===
+  - id: dp.generate.shots
+    type: agent
+    agentRole: dp
+    input: { bindings: { shots: "${director.storyboard.storyboardPlan.shots}", style: "${director.style.visualStyle}" } }
+    output: { keys: [images] }
+    config: { timeoutMs: 600000, retry: { maxRetries: 2, backoffMs: 10000, backoffMultiplier: 2, retryableErrors: [] } }
+
+  # === Stage 4: Final Assembly ===
+  - id: editor.assemble
+    type: agent
+    agentRole: editor
+    input: { bindings: { shots: "${dp.generate.shots.images}", plan: "${director.storyboard.storyboardPlan}" } }
+    output: { keys: [editTimeline] }
+
+  - id: final.assemble
+    type: script
+    scriptId: final-render
+    input: { bindings: { shots: "${dp.generate.shots.images}", plan: "${director.storyboard.storyboardPlan}", timeline: "${editor.assemble.editTimeline}" } }
+
 edges:
   - { from: screenwriter.generate, to: review.script }
   - { from: review.script, to: director.style }
   - { from: director.style, to: director.storyboard }
-  - { from: director.storyboard, to: generate.shots.fork }
-  - { from: generate.shots.fork, to: generate.shot.unit }
-  - { from: generate.shot.unit, to: generate.shots.join }
-  - { from: generate.shots.join, to: final.assemble }
+  - { from: director.storyboard, to: dp.generate.shots }
+  - { from: dp.generate.shots, to: editor.assemble }
+  - { from: editor.assemble, to: final.assemble }

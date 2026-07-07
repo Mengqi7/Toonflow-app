@@ -13,6 +13,12 @@ import type { WorkflowDefinition } from "./types";
 import fs from "fs";
 import path from "path";
 import fg from "fast-glob";
+import { TemplateLibrary } from "../../../toonflow-comfyui-agent/src/TemplateLibrary";
+import type { Template } from "../../../toonflow-comfyui-agent/src/TemplateLibrary";
+import { ReviewPipeline } from "../../review/ReviewPipeline";
+import { HarnessEventBus, harnessEventBus } from "./HarnessEventBus";
+import { Hooks } from "./Hooks";
+import { initDirectorOrchestrator } from "./DirectorOrchestrator";
 
 // ── 全局单例 ────────────────────────────────────────
 export const harness = {
@@ -23,6 +29,10 @@ export const harness = {
   memoryBus: new MemoryBus(),
   mcpConnector: new MCPConnector(),
   scriptExecutor: new ScriptExecutor(),
+  eventBus: harnessEventBus,
+  hooks: new Hooks(),
+  directorOrchestrator: null as any,
+  reviewPipeline: null as ReviewPipeline | null,
   initialized: false,
 };
 
@@ -53,13 +63,83 @@ async function loadYamlWorkflow(filePath: string): Promise<WorkflowDefinition | 
 }
 
 /**
+ * P0-4: ComfyUI 模板自动导入 — 启动时将内置模板写入 o_comfyui_workflow 表
+ * 从此用户无需手动导入工作流即可使用 ComfyUI 生图/生视频
+ */
+async function seedComfyUITemplates(): Promise<void> {
+  try {
+    const { db } = await import("@/utils/db");
+    // db 本身就是 knex 查询函数 (src/utils/db.ts:47 export { db })
+    const knex = db;
+
+    const lib = new TemplateLibrary();
+    const templates = lib.listAll();
+    let count = 0;
+
+    for (const tpl of templates) {
+      // 检查模板是否已存在（按 name + type 去重）
+      const existing = await knex("o_comfyui_workflow")
+        .where({ name: tpl.name, type: tpl.category })
+        .first();
+
+      if (existing) continue;
+
+      // 提取 workflow JSON 中可配置参数（{{xxx}} 模式）
+      const params = extractWorkflowParams(tpl);
+
+      const now = Date.now();
+      await knex("o_comfyui_workflow").insert({
+        name: tpl.name,
+        description: tpl.description,
+        type: tpl.category,
+        workflow_json: JSON.stringify(tpl.workflow),
+        parameters: JSON.stringify(params),
+        createdBy: "system",
+        createTime: now,
+        updateTime: now,
+      });
+      count++;
+    }
+
+    console.log(`[Harness] ComfyUI templates seeded: ${count} new (total: ${templates.length})`);
+  } catch (err) {
+    console.warn("[Harness] ComfyUI template seeding skipped:", err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * 从模板中提取可配置参数
+ * 遍历所有 node 的 widgets_values，提取 {{paramName}} 模式
+ */
+function extractWorkflowParams(tpl: Template): Array<{ name: string; default: string; nodeId: number }> {
+  const params: Array<{ name: string; default: string; nodeId: number }> = [];
+  const seen = new Set<string>();
+
+  for (const node of tpl.workflow.nodes) {
+    if (!Array.isArray(node.widgets_values)) continue;
+    // 将 widgets_values 转为字符串扫描 {{...}}
+    const str = JSON.stringify(node.widgets_values);
+    const re = /\{\{(\w+)\}\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(str)) !== null) {
+      const name = m[1];
+      if (!seen.has(name)) {
+        seen.add(name);
+        params.push({ name, default: "", nodeId: node.id });
+      }
+    }
+  }
+
+  return params;
+}
+
+/**
  * 自动创建缺失的数据库表
  */
 async function ensureTables(): Promise<void> {
   try {
     const { db } = await import("@/utils/db");
-    // @ts-ignore - raw knex access
-    const knex = db.client;
+    const knex = db;  // db 本身就是 knex 实例
 
     const tables: Record<string, string> = {
       o_workflow_state: `
@@ -135,14 +215,55 @@ async function ensureTables(): Promise<void> {
         )
         CREATE INDEX IF NOT EXISTS idx_memory_ns ON o_memory(namespace)
         CREATE INDEX IF NOT EXISTS idx_memory_type ON o_memory(type)`,
+      o_artifact_version: `
+        CREATE TABLE IF NOT EXISTS o_artifact_version (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          artifactType TEXT NOT NULL,
+          artifactKey TEXT NOT NULL,
+          projectId INTEGER NOT NULL,
+          instanceId TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          content TEXT,
+          filePath TEXT,
+          reviewScore TEXT,
+          reviewFeedback TEXT,
+          source TEXT DEFAULT 'harness',
+          createdAt INTEGER NOT NULL,
+          UNIQUE(artifactType, artifactKey, projectId, version)
+        )
+        CREATE INDEX IF NOT EXISTS idx_artifact_version_key ON o_artifact_version(artifactType, artifactKey, projectId)`,
+      o_scene_library: `
+        CREATE TABLE IF NOT EXISTS o_scene_library (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          projectId INTEGER,
+          sceneName TEXT NOT NULL,
+          lightingSpec TEXT,
+          artDirection TEXT,
+          source TEXT DEFAULT 'manual',
+          instanceId TEXT,
+          createTime INTEGER, updateTime INTEGER
+        )`,
+      o_prop_library: `
+        CREATE TABLE IF NOT EXISTS o_prop_library (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          projectId INTEGER,
+          type TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT,
+          source TEXT DEFAULT 'manual',
+          instanceId TEXT,
+          createTime INTEGER
+        )`,
     };
 
     for (const [tableName, ddl] of Object.entries(tables)) {
-      // @ts-ignore
       const exists = await knex.raw(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`);
       if (!exists || !exists.length) {
-        // @ts-ignore
-        await knex.raw(ddl);
+        // 分割多条 SQL 语句 (SQLite 不支持一个 raw() 中执行多条)
+        const statements = ddl.split(/(?<=\))\s+(?=CREATE)/).map(s => s.trim()).filter(Boolean);
+        for (const stmt of statements) {
+          await knex.raw(stmt);
+        }
         console.log(`[Harness] Table created: ${tableName}`);
       }
     }
@@ -162,8 +283,14 @@ export async function initHarness(): Promise<void> {
   // P0: 确保数据库表存在
   await ensureTables();
 
+  // P0-4: ComfyUI 模板自动导入
+  await seedComfyUITemplates();
+
   // 1. MemoryBus
   await harness.memoryBus.init();
+
+  // 1.5 EventBus 注入 MemoryBus (用于事件持久化与 SSE 重放)
+  harness.eventBus.setMemoryBus(harness.memoryBus);
 
   // 2. RulesEngine (热加载 rules/*.md)
   try {
@@ -194,8 +321,37 @@ export async function initHarness(): Promise<void> {
     console.log(`  - ${a.id} (${a.name}) [${a.capabilities.join(", ")}]`);
   }
 
-  // 5. WorkflowRunner — 注入 AgentRegistry 并加载 YAML 工作流
+  // 5. WorkflowRunner — 注入 AgentRegistry + harness 全局单例 + 加载 YAML 工作流
   harness.workflowRunner.setAgentRegistry(harness.agentRegistry);
+  // P0-2 fix: 注入全局单例，确保 Agent 间共享记忆/规则/技能/MCP
+  harness.workflowRunner.setHarnessDeps({
+    memoryBus: harness.memoryBus,
+    rulesEngine: harness.rulesEngine,
+    skillsRegistry: harness.skillsRegistry,
+    mcpConnector: harness.mcpConnector,
+    scriptExecutor: harness.scriptExecutor,
+  });
+
+  // P1-3: 初始化共享 ReviewPipeline (注入 RulesEngine + MemoryBus)
+  const reviewPipeline = new ReviewPipeline({
+    rulesEngine: harness.rulesEngine,
+    memoryBus: harness.memoryBus,
+  });
+  // @ts-ignore - 注入私有静态字段
+  harness.workflowRunner.constructor.initReviewPipeline(reviewPipeline);
+  harness.reviewPipeline = reviewPipeline;
+  console.log(`[Harness] ReviewPipeline initialized`);
+
+  // V2: 初始化 DirectorOrchestrator (导演 Agent 调度器)
+  harness.directorOrchestrator = initDirectorOrchestrator({
+    agentRegistry: harness.agentRegistry,
+    memoryBus: harness.memoryBus,
+    rulesEngine: harness.rulesEngine,
+    skillsRegistry: harness.skillsRegistry,
+    mcpConnector: harness.mcpConnector,
+    workflowRunner: harness.workflowRunner,
+  });
+  console.log(`[Harness] DirectorOrchestrator initialized`);
 
   const wfDir = path.resolve("data/workflows");
   if (fs.existsSync(wfDir)) {

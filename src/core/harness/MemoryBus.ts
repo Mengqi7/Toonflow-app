@@ -45,6 +45,19 @@ export class MemoryBus {
     return id;
   }
 
+  /**
+   * P1-3 基础 / P1-4 基础: 记录事件到 MemoryBus
+   * 用于 ReviewPipeline 记录审核历史
+   */
+  async recordEvent(namespace: string, key: string, value: any): Promise<string> {
+    return this.set({
+      namespace,
+      key,
+      value: typeof value === "string" ? value : JSON.stringify(value),
+      type: "event",
+    });
+  }
+
   async get(query: MemoryQuery): Promise<MemoryEntry[]> {
     await this.init();
     let q = db("o_memory");
