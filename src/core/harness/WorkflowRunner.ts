@@ -11,6 +11,7 @@ import type { RulesEngine } from "./RulesEngine";
 import type { SkillsRegistry } from "./SkillsRegistry";
 import type { MCPConnector } from "./MCPConnector";
 import { ReviewPipeline } from "@/review/ReviewPipeline";
+import { harnessEventBus } from "./HarnessEventBus";
 
 export class WorkflowRunner extends EventEmitter {
   private graphs = new Map<string, Graph>();
@@ -213,7 +214,7 @@ export class WorkflowRunner extends EventEmitter {
             }
             if (onReject === "pause") {
               instance.status = "paused";
-              return { nodeId, state: "paused", output: reviewResult };
+              return { nodeId, state: "failed", output: reviewResult };
             }
             return { nodeId, state: "failed", output: reviewResult };
           } catch (reviewErr: any) {
@@ -371,12 +372,35 @@ export class WorkflowRunner extends EventEmitter {
       _ctx,
     );
 
+    const retryInstruction = result.passed
+      ? undefined
+      : await pipeline.generateRetryInstruction(
+        upstreamAgent,
+        output,
+        result,
+        1,
+        node.config.retry?.maxRetries || 1,
+      );
+
+    await harnessEventBus.emitEvent({
+      kind: "review.scored",
+      taskId: node.id,
+      reviewer: gate.reviewerAgentId,
+      instanceId,
+      overall: result.overall,
+      passed: result.passed,
+      scores: result,
+      feedback: result.feedback,
+      timestamp: Date.now(),
+    } as any);
+
     return {
       passed: result.passed,
       totalScore: result.overall,
       scores: result,
       feedback: result.feedback,
       agentId: upstreamAgent,
+      retryInstruction,
       criteria: criteria.map(c => c.name),
     };
   }
@@ -409,6 +433,18 @@ export class WorkflowRunner extends EventEmitter {
     const ctx = instance.context;
     const maxRetries = node.config.retry.maxRetries;
     const budget = node.config.globalRetryBudget;
+
+    await harnessEventBus.emitEvent({
+      kind: "review.reroute",
+      taskId: nodeId,
+      fromAgent: reviewResult.agentId || "review-gate",
+      toAgent: node.agentRole || "unknown",
+      instanceId: instance.id,
+      reason: reviewResult.feedback || `Review score ${reviewResult.totalScore} below threshold`,
+      retryInstruction: reviewResult.retryInstruction || reviewResult,
+      userInputRequired: false,
+      timestamp: Date.now(),
+    } as any);
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       // P1-5: 预算检查

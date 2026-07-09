@@ -1,141 +1,48 @@
-# Harness V2 — 导演 Agent 主导的全自动影视流水线（中文版）
+# Harness V2 Director Control - AI影视智能工作台
 
-> **状态**: 设计阶段（待用户二次确认）  
-> **范围**: 完全重写第一阶段 `toonflow-harness-upgrade` 的设计；旧未提交代码大量清理  
-> **核心理念**: 严格按 Harness 工程规范（agents / skills / hooks / workflow / scripts / memory）+ 多 Agent 协作契约 + 提示词驱动 + LLM 自主调度
+> **状态**: 需求重定向与原型验证阶段  
+> **决策日期**: 2026-07-08  
+> **核心决策**: 暂停当前 demo 版本开发，先重做产品逻辑与原型；第一阶段移除主控台对 ComfyUI 的直接调用，ComfyUI 延后到后续迭代作为可插拔生成后端接入。
 
----
+## Why
 
-## 1. 为什么（Why）
+当前 `#/harness/control/:instanceId` demo 偏向普通仪表盘和生图参数面板，未体现 Harness 工程的核心价值：多角色 Agent 自主调度、产物回写、自动审核、人工终审与驳回重试闭环。
 
-第一阶段 `toonflow-harness-upgrade` 在 6 个月内完成了约 47% 的骨架（WorkflowRunner / AgentRegistry / ReviewPipeline / RulesEngine / MemoryBus / ComfyUI 集成），但**实现形态与用户期望完全错位**：
+本轮需要重新对齐 Toonflow 已有能力与 Harness 闭环思想，先验证“AI影视智能工作台”的产品逻辑，再继续正式开发，避免 ComfyUI 参数配置提前占据主控台重点。
 
-| # | 痛点 | 根因 |
-|---|------|------|
-| 1 | 启动后是"执行黑洞"，只看到进度数字 | 所有 Agent 默认走 mock（`DP_FAST_MODE=1`、`mockImagePath`、`defaultVisualStyle`、`defaultShots`、`defaultSoundPlan`），无真实产物 |
-| 2 | 没有视频生成节点 | `generate.video.unit` 仍走 `dp` Agent 用 imageModel，没接视频后端 |
-| 3 | 角色太弱、调度太粗 | 仅 8 个 Agent；无制片人/监制/副导演/化妆师/服装师/置景师/声音设计师；无"调度者" |
-| 4 | 没和业务打通 | DPAgent 输出不写回 o_assets/o_storyboard；用户还得去 `#/cornerScape` 手工生图 |
-| 5 | 没有对话控制台 | `#/harness` 只显示 KPI 数字；无 AI 导演对话窗口 |
-| 6 | ComfyUI 设置完全不可用 | `o_comfyui_workflow` 表有数据但前端无法配置参数；与 Harness 流程脱节 |
-| 7 | 审核机制无效 | review-gate 的 onReject=skip；无人工确认环节；无历史版本 |
-| 8 | 代码垃圾多 | 一阶段有 15 个文件未提交（`NovelImportService` / `ReviewLearner` / `migration` 等空壳/重试代码） |
+## What Changes
 
-**根本原因**: 一阶段只设计了"引擎如何调度 Agent"，没有设计"导演 Agent 如何调用业务模块、把产物写回数据库、让用户看见过程"。
+- **暂停现有主控台 demo 的继续开发**，将当前前端半成品视为原型失败稿，仅保留可复用的路由、SSE、对话窗口和基础组件经验。
+- **移除第一阶段 ComfyUI 直接调用能力**：主控台不展示 ComfyUI 参数快照、测试运行、workflow 切换或直接执行按钮；后续只通过生成后端抽象预留扩展点。
+- **重做工作台定位**：主控台是 Harness 智能制片系统的可视化管控中心，不是单一生图工具页。
+- **聚焦 Harness 工业流水线闭环**：总导演调度 Agent 负责全局调度，剧本改编、台词打磨、角色设定、服化道、场景概念、衍生图合成、分镜脚本、分镜提示词、分镜生图、视频生成、一致性校验、配音、配乐、剪辑合成等执行 Agent 负责生产，专项审核 Agent 与总监制 Agent 负责节点内审、阶段复核与跨工种打回。
+- **强化全过程透明与责任追溯**：每个工位都展示输入来源、调用模型、提示词全文、参考素材、输出产物、版本号、审核意见、打回原因和重跑目标，避免 Agent 生产黑盒。
+- **强化多级审核机制**：节点内审自动打回，阶段终审由用户确认，最终成片由用户验收。
+- **复用 Toonflow 资产**：沿用可编排工作流、剧本 Agent、提示词/模型体系、全局设置中心、Skills 管理与业务产物表。
+- **先产出 Figma/HTML 动态原型**：原型必须展示未来工业中控视觉、流水线工位、Agent 分工、分镜专项详情、审核门禁、人工介入、版本追溯和全局设置入口；原型确认后再进入正式开发。
 
----
+## Capabilities
 
-## 2. 改什么（What Changes）
+### New Capabilities
 
-> 本轮**仅产出设计文档与原型图**，不写代码。用户确认后再进入实施。
+- `harness-architecture`: Harness 工程闭环架构、运行边界、ComfyUI 延后策略。
+- `harness-department-agents`: Harness 下的核心工种 Agent 定义、在线编辑和协作契约。
+- `harness-business-bridge`: Harness 产物与 Toonflow 现有剧本、资产、分镜、工作台能力的回写与查看入口。
+- `harness-review-with-history`: 自动内审、人工终审、驳回重试、版本记录与回滚。
+- `harness-control-room-ui`: AI影视智能工作台主控台原型与正式 UI 规范。
+- `harness-prompt-driven`: 提示词驱动的导演调度、监制审核与 retryInstruction 生成。
 
-### 2.1 新增能力（New Capabilities）
+### Modified Capabilities
 
-- **`harness-architecture`**: Harness V2 整体架构，严格遵循标准 Harness 规范（agents/skills/hooks/workflow/scripts/memory 六要素 + 多 Agent 协作契约）。架构图、详细流转流程、入口设计。
-- **`harness-department-agents`**: 13 个工种 Agent 的完整定义（角色/职责/上场时机/输入输出契约/相互关系/打回路径）。
-- **`harness-business-bridge`**: Harness 工程与现有项目业务（剧本管理/角色管理/场景管理/分镜管理/资产/工作台）的紧密集成方案。
-- **`harness-comfyui-engine`**: ComfyUI 模块**完全重写**：服务管理/工作流导入/参数配置/测试/版本管理/API & ComfyUI 双后端选择，全部适配 Harness 调度。
-- **`harness-review-with-history`**: 多级审核系统：监制 Agent 自动审核 → 用户确认 → 自动打回重做；每张图/视频/剧本支持**多版本保存**，历史版本可对比与回滚。
-- **`harness-control-room-ui`**: 主控台 UI（左侧 AI 导演对话 + 右侧动态步骤画面 + 多场景切换 + 用户确认弹窗）。
-- **`harness-prompt-driven`**: 全流程提示词驱动机制；除 pipeline 代码外，调度、审核、驳回决策全部由 LLM + 提示词完成。
+- `harness-agent-orchestration`: WorkflowRunner 收缩为单任务执行容器，顶层调度由 DirectorOrchestrator 承担。
+- `film-production-pipeline`: 从静态线性流程升级为导演 Agent 动态任务图。
+- `script-agent`: 剧本能力作为工种 Agent 被 Harness 调度，并将产物写回现有业务。
+- `production-agent`: 单一生产 Agent 拆分为多工种协作闭环。
 
-### 2.2 修改的能力（Modified Capabilities）
+## Impact
 
-- **`harness-agent-orchestration`**（一阶段已有）: WorkflowRunner 收缩为"单任务执行容器"，调度权上移给导演 Agent。
-- **`script-agent`**（一阶段已有）: 编剧 Agent 改为"剧本工种"，由导演 Agent 调度，产物直接落 `o_script`。
-- **`production-agent`**（一阶段已有）: 单 Agent 流水线拆为 8 个工种协作。
-- **`film-production-pipeline`**（一阶段已有）: DAG 从静态 YAML 改为导演 Agent 动态生成的任务图。
-
-### 2.3 不在范围（Non-Goals）
-
-- 不重写底层 AI 调用层（`src/utils/ai.ts` 保持不变）
-- 不重写 `MemoryBus` / `RulesEngine` / `SkillsRegistry` 框架（保留一阶段版本）
-- 不动 `toonflow-comfyui-agent` 独立项目（保留为可选 ComfyUI workflow 生成器）
-- 不支持多人协同
-
----
-
-## 3. 能力清单（Capabilities）
-
-### 新增能力
-
-- `harness-architecture`: Harness V2 整体架构与流转流程
-- `harness-department-agents`: 13 工种 Agent 完整定义与协作契约
-- `harness-business-bridge`: Harness 与现有业务的集成（剧本/角色/场景/分镜/资产）
-- `harness-comfyui-engine`: ComfyUI 模块完全重写 + API 双后端
-- `harness-review-with-history`: 多级审核 + 历史版本
-- `harness-control-room-ui`: 主控台 UI
-- `harness-prompt-driven`: 提示词驱动的 LLM 调度机制
-
-### 修改的能力
-
-- `harness-agent-orchestration`: WorkflowRunner 职责收缩
-- `script-agent`: 编剧改为工种
-- `production-agent`: 拆分为多工种
-- `film-production-pipeline`: DAG 动态化
-
----
-
-## 4. 影响（Impact）
-
-### 4.1 受影响模块
-
-| 模块 | 现状 | 二轮改造 |
-|------|------|----------|
-| `src/agents/director/DirectorAgent.ts` | 23 行 mock | 重写为导演 Agent + LLM 调度器 |
-| `src/agents/screenwriter/ScreenwriterAgent.ts` | 50 行 fallback | 重写为剧本工种，产物落 `o_script` |
-| `src/agents/dp/DPAgent.ts` | mock 优先 | 删 mock，支持 API + ComfyUI 双后端 |
-| `src/agents/lighting/LightingAgent.ts` | default 兜底 | 删 default，产物落 `o_scene_library` |
-| `src/agents/costume/CostumeAgent.ts` | 写库无图 | 完善 referenceImage，落 `o_character_library` |
-| `src/agents/sound/SoundAgent.ts` | default plan | 删 default，调真实 TTS |
-| `src/agents/editor/EditorAgent.ts` | 待确认 | 生成时间轴 JSON |
-| `src/agents/vfx/VFXAgent.ts` | 待确认 | 合并视频生成 |
-| `src/comfyui/*` | 不可用 | 完全重写：服务/工作流/参数/测试/版本 |
-| `src/core/harness/WorkflowRunner.ts` | 顶层调度 | 收缩为执行容器 |
-| `src/core/harness/init.ts` | 启动入口 | 增加导演 Agent 注册 |
-| `src/routes/harness/index.ts` | 8 端点 | 扩展为 30+ 端点 |
-| `src/routes/review/*` | 一阶段未提交 | 删除后重写 |
-| `src/routes/style/*` | 一阶段未提交 | 删除后重写 |
-| `src/core/harness/NovelImportService.ts` | 未提交 | 删除，逻辑合并到 DirectorOrchestrator |
-| `src/core/harness/ReviewLearner.ts` | 未提交 | 删除，逻辑合并到 SupervisorAgent |
-| `src/core/harness/migration.ts` | 未提交 | 删除，迁移逻辑合并到 init.ts |
-
-### 4.2 新增模块
-
-详见 `design.md` 第 8 节"文件结构"。
-
-### 4.3 风险
-
-- **R1（高）**: LLM 调用耗时长 → 主控台需做好"加载中"与"取消"状态机
-- **R2（高）**: 真实生图/视频可能失败 → 监制 Agent 自主重试 + 用户决策兜底
-- **R3（中）**: ComfyUI 工作流参数注入复杂 → 需要可视化参数编辑器
-- **R4（中）**: 13 工种 system prompt 编写工作量大 → 模板化拼装 + LLM 生成草稿
-- **R5（中）**: 上版本代码清理可能误删可用逻辑 → 在 design.md 中列出**完整清理清单**与**保留清单**
-
----
-
-## 5. 验证标准（本轮不做，确认后才实施）
-
-1. **架构规范性**: 严格遵循 Harness 工程规范，包含 agents/skills/hooks/workflow/scripts/memory 六要素
-2. **角色完整性**: 13 个工种全部有独立 Agent 类 + 中文 system prompt + 输入输出契约
-3. **业务集成度**: Harness 跑完后，`#/script`、`#/cornerScape`、`#/assets`、`#/storyboard` 都能直接看到 Harness 产物
-4. **ComfyUI 可用性**: 工作流导入/参数配置/测试/版本管理全部可用，与 Harness 生图生视频流程打通
-5. **审核机制**: 监制 Agent 自动审核 + 用户确认 + 多版本保存 + 历史回滚
-6. **可见性**: 每步执行都有独立事件 + 进度展示，不是聚合百分比
-7. **驳回流程**: 监制 Agent 自主决定打回给哪个工种，用户可在关键节点确认
-8. **会话性**: 用户能在对话窗口随时打断导演 Agent，并把对话内容转化为工种任务
-9. **代码质量**: 删除所有未使用的代码，不保留垃圾
-
----
-
-## 6. 后续流程
-
-- ✅ **本轮产出**: 全中文 `proposal.md` / `design.md` / `specs/*.md` / `tasks.md` + 升级版原型 HTML
-- ⏸ **等待用户二次确认**:
-  - 整体架构是否符合 Harness 工程规范
-  - 13 工种角色定义是否完整
-  - 业务集成方案是否合理
-  - ComfyUI 模块设计是否可用
-  - 审核与历史版本机制是否符合期望
-  - 主控台 UI 原型是否到位
-- ⏭ **用户确认后**: 进入实施阶段
+- **前端**: 重做 `HarnessControlRoom` 产品结构；移除 ComfyUI 参数面板与直接测试调用；新增导演中枢、任务图、审核门禁、设置入口、版本历史视图。
+- **后端**: 保留 HarnessEventBus、TaskGraph、CallbackBridge、ReviewPipeline、DirectorOrchestrator 等核心闭环；第一阶段不得依赖 ComfyUI 服务可用性。
+- **设置中心**: 将 Toonflow 的模型、Agent、提示词、Skills、记忆配置作为 Harness 主控台全局设置入口。
+- **OpenSpec**: 将原 `harness-comfyui-engine` 从第一阶段实施范围移除，后续另立变更或二期任务接入。
+- **验证方式**: 先通过 Figma 与本地 HTML 原型确认交互，再继续正式开发和端到端验证。

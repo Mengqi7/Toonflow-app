@@ -128,11 +128,13 @@ export type HarnessEvent =
   | { id: string; kind: "review.scored"; taskId: string; reviewer: string; instanceId: string; overall: number; passed: boolean; scores: any; feedback?: string; timestamp: number }
   | { id: string; kind: "review.reroute"; taskId: string; fromAgent: string; toAgent: string; instanceId: string; reason: string; retryInstruction?: any; userInputRequired: boolean; timestamp: number }
   | { id: string; kind: "director.message"; instanceId: string; content: string; mentions?: string[]; timestamp: number }
+  | { id: string; kind: "director.user_input"; instanceId: string; action: string; choice?: string; taskId?: string; timestamp: number }
   | { id: string; kind: "director.user_input_required"; instanceId: string; prompt: string; options?: string[]; taskId?: string; timestamp: number }
   | { id: string; kind: "harness.completed"; instanceId: string; summary: string; timestamp: number }
   | { id: string; kind: "harness.failed"; instanceId: string; reason: string; timestamp: number }
   | { id: string; kind: "callback.persisted"; instanceId: string; table: string; rowCount: number; artifactKey: string; timestamp: number }
-  | { id: string; kind: "callback.failed"; instanceId: string; table: string; error: string; timestamp: number };
+  | { id: string; kind: "callback.failed"; instanceId: string; table: string; error: string; timestamp: number }
+  | { id: string; kind: "version.created"; instanceId: string; artifactType: string; artifactKey: string; version: number; source: "save" | "rollback"; timestamp: number };
 
 export interface ArtifactRef {
   type: "script" | "image" | "video" | "audio" | "timeline" | "character" | "scene" | "prop";

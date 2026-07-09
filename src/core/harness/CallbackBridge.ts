@@ -365,7 +365,7 @@ export class CallbackBridge {
     const nextVersion = (maxVersionRow?.maxVersion || 0) + 1;
 
     const [id] = await db("o_artifact_version").insert({
-      artifactType,
+      artifactType: artifactType as "script" | "image" | "video" | "audio" | "timeline",
       artifactKey,
       projectId,
       instanceId,
@@ -377,6 +377,16 @@ export class CallbackBridge {
       source: "harness",
       createdAt: Date.now(),
     });
+
+    await harnessEventBus.emitEvent({
+      kind: "version.created",
+      instanceId,
+      artifactType: artifactType as "script" | "image" | "video" | "audio" | "timeline",
+      artifactKey,
+      version: nextVersion,
+      source: "save",
+      timestamp: Date.now(),
+    } as any);
 
     return id;
   }
@@ -399,7 +409,7 @@ export class CallbackBridge {
     return this.saveVersion({
       instanceId: targetVersion.instanceId,
       projectId,
-      artifactType,
+      artifactType: artifactType as "script" | "image" | "video" | "audio" | "timeline",
       artifactKey,
       content: targetVersion.content,
       filePath: targetVersion.filePath,

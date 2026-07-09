@@ -19,7 +19,7 @@ const HEARTBEAT_INTERVAL_MS = 15000;
 
 router.get("/stream", async (req: express.Request, res: express.Response) => {
   const instanceId = (req.query.instanceId as string) || "global";
-  const lastEventId = (req.headers["last-event-id"] as string) || undefined;
+  const lastEventId = (req.headers["last-event-id"] as string) || (req.query.lastEventId as string) || undefined;
 
   // 设置 SSE headers
   res.writeHead(200, {
