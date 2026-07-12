@@ -15,6 +15,7 @@
           </div>
         </div>
         <div class="header-actions">
+          <button type="button" title="查看 Agent 能力" @click="showCapabilities = !showCapabilities"><i-people /></button>
           <button type="button" title="清空对话" @click="clearMessages"><i-delete /></button>
           <button type="button" title="收起" @click="isOpen = false"><i-right /></button>
         </div>
@@ -24,6 +25,16 @@
         <span>{{ domainLabel }}</span>
         <span v-if="episodeId">剧集 {{ episodeId }}</span>
         <span v-if="selected.length">已选 {{ selected.length }}</span>
+      </section>
+
+      <section v-if="showCapabilities" class="capability-panel">
+        <header><strong>Director 能力</strong><span>{{ enabledCapabilities.length }}/{{ capabilities.length }} 可用</span></header>
+        <div class="capability-list">
+          <div v-for="item in capabilities" :key="item.stage" class="capability-item" :class="{ disabled: !item.enabled }">
+            <span class="capability-state"></span>
+            <div><strong>{{ item.agentName }}</strong><span>{{ item.skillName }}</span><code>{{ item.modelName || "未配置模型" }}</code></div>
+          </div>
+        </div>
       </section>
 
       <div ref="messageList" class="message-list">
@@ -44,10 +55,19 @@
               <i-time v-else />
               <div><code>{{ step.toolName }}</code><span>{{ step.purpose }}</span></div>
             </div>
+            <div v-if="delegatedSteps(message.actionRun).length" class="delegated-steps">
+              <div v-for="step in delegatedSteps(message.actionRun)" :key="`${step.role}-${step.tool}`" class="delegated-row">
+                <span :class="['delegated-state', step.status]"></span>
+                <div><strong>{{ step.role }}</strong><code>{{ step.tool }}</code><span>{{ step.detail }}</span></div>
+              </div>
+            </div>
             <dl v-if="message.actionRun.result" class="result-grid">
+              <div v-if="message.actionRun.result.stage"><dt>阶段</dt><dd>{{ message.actionRun.result.stage }}</dd></div>
               <div v-if="message.actionRun.result.entity"><dt>对象</dt><dd>{{ message.actionRun.result.entity.label || message.actionRun.result.entity.id }}</dd></div>
               <div v-if="message.actionRun.result.version"><dt>版本</dt><dd>v{{ message.actionRun.result.version }}</dd></div>
               <div v-if="message.actionRun.result.changedFields"><dt>字段</dt><dd>{{ message.actionRun.result.changedFields.join("、") }}</dd></div>
+              <div v-if="message.actionRun.result.artifactIds?.length"><dt>产物</dt><dd>{{ message.actionRun.result.artifactIds.length }} 项</dd></div>
+              <div v-if="message.actionRun.result.nextAction"><dt>下一步</dt><dd>{{ message.actionRun.result.nextAction }}</dd></div>
             </dl>
             <p v-if="message.actionRun.error" class="run-error">{{ message.actionRun.error.message }}</p>
             <div v-if="message.actionRun.status === 'awaiting_confirmation'" class="confirm-actions">
@@ -99,7 +119,17 @@ const { isOpen, domain, episodeId, selected, visible, messages, running, connect
 const { baseUrl } = storeToRefs(settingStore());
 const draft = ref("");
 const messageList = ref<HTMLElement>();
+const showCapabilities = ref(false);
+const capabilities = ref<DirectorCapability[]>([]);
 let eventSource: EventSource | null = null;
+
+interface DirectorCapability {
+  stage: string;
+  agentName: string;
+  skillName: string;
+  modelName: string;
+  enabled: boolean;
+}
 
 const domainLabels: Record<string, string> = {
   script: "剧本",
@@ -119,9 +149,13 @@ const apiBaseUrl = computed(() => {
   const raw = String(baseUrl.value || "").replace(/\/$/, "");
   return /\/api$/.test(raw) ? raw : `${raw}/api`;
 });
+const enabledCapabilities = computed(() => capabilities.value.filter(item => item.enabled));
 
 watch(() => props.routePath, path => store.syncRoute(path), { immediate: true });
-watch([() => props.projectId, instanceId], () => connectEvents(), { immediate: true });
+watch([() => props.projectId, instanceId], () => {
+  connectEvents();
+  void loadCapabilities();
+}, { immediate: true });
 watch(() => messages.value.length, async () => {
   await nextTick();
   if (messageList.value) messageList.value.scrollTop = messageList.value.scrollHeight;
@@ -133,6 +167,16 @@ async function send() {
   draft.value = "";
   store.addMessage({ id: `user-${Date.now()}`, role: "user", content: message, createdAt: Date.now() });
   await execute(message, false);
+}
+
+async function loadCapabilities() {
+  if (!props.projectId) return;
+  try {
+    const response = await axios.get("/harness/workbench/capabilities");
+    capabilities.value = (response as any).data || [];
+  } catch {
+    capabilities.value = [];
+  }
 }
 
 async function execute(message: string, confirmed: boolean) {
@@ -216,6 +260,30 @@ function connectEvents() {
       window.dispatchEvent(new CustomEvent("harness:ui-patch", { detail: payload.patch }));
     } catch {}
   });
+  for (const eventName of ["action.awaiting_confirmation", "tool.started", "tool.progress", "tool.completed", "tool.failed", "tool.cancelled"]) {
+    eventSource.addEventListener(eventName, event => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        if (payload.actionRunId) void refreshActionRun(payload.actionRunId);
+      } catch {}
+    });
+  }
+}
+
+async function refreshActionRun(actionRunId: string) {
+  try {
+    const response = await axios.get(`/harness/workbench/actions/${actionRunId}`);
+    const actionRun = (response as any).data as HarnessActionRun;
+    store.replaceActionRun(actionRun);
+    if (actionRun.status === "completed") store.refreshDomain((actionRun.result as any)?.uiPatch?.domain);
+  } catch {
+    // The initiating request still carries the ActionRun; SSE refresh is best effort.
+  }
+}
+
+function delegatedSteps(run: HarnessActionRun): Array<{ role: string; tool: string; status: "completed" | "pending"; detail: string }> {
+  const steps = (run.result as any)?.delegatedSteps;
+  return Array.isArray(steps) ? steps : [];
 }
 
 function statusLabel(status: HarnessActionRun["status"]) {
@@ -332,6 +400,24 @@ onBeforeUnmount(() => eventSource?.close());
   span { flex: none; padding: 2px 6px; border: 1px solid var(--td-border-level-1-color, #dcdfe6); border-radius: 4px; font-size: 11px; }
 }
 
+.capability-panel {
+  max-height: 230px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--td-border-level-1-color, #e5e7eb);
+  background: #fff;
+  > header { padding: 8px 12px; display: flex; justify-content: space-between; font-size: 11px; }
+  > header span { color: #6b7280; }
+}
+.capability-list { max-height: 194px; padding: 0 8px 8px; overflow-y: auto; display: grid; gap: 4px; }
+.capability-item { min-height: 42px; padding: 5px 7px; display: flex; gap: 7px; align-items: flex-start; border: 1px solid #edf0f2; border-radius: 4px; }
+.capability-item > div { min-width: 0; display: grid; grid-template-columns: 1fr auto; gap: 1px 6px; flex: 1; }
+.capability-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.capability-item span, .capability-item code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6b7280; font-size: 9px; }
+.capability-item code { grid-column: 2; grid-row: 1; }
+.capability-state { width: 7px; height: 7px; flex: 0 0 7px; margin-top: 4px; border-radius: 50%; background: #2ba471; }
+.capability-item.disabled { opacity: .58; }
+.capability-item.disabled .capability-state { background: #c9353f; }
+
 .message-list {
   min-height: 0;
   padding: 14px 12px;
@@ -373,6 +459,14 @@ onBeforeUnmount(() => eventSource?.close());
 .tool-row { padding: 7px 9px; display: flex; gap: 8px; border-top: 1px solid #edf0f2; color: #4b5563; font-size: 12px; }
 .tool-row > div { display: grid; gap: 2px; }
 .tool-row span { color: #6b7280; font-size: 11px; }
+.delegated-steps { border-top: 1px solid #edf0f2; background: #fafbfd; }
+.delegated-row { padding: 7px 9px; display: flex; gap: 8px; font-size: 11px; color: #4b5563; }
+.delegated-row > div { min-width: 0; display: grid; gap: 2px; }
+.delegated-row strong { color: #1f2937; font-size: 11px; }
+.delegated-row code { color: #5a6475; font-size: 10px; }
+.delegated-row span { color: #6b7280; line-height: 1.35; }
+.delegated-state { width: 7px; height: 7px; flex: 0 0 7px; margin-top: 4px; border-radius: 50%; background: #aab2bd; }
+.delegated-state.completed { background: #2ba471; }
 .result-grid { margin: 0; padding: 8px 9px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; border-top: 1px solid #edf0f2; }
 .result-grid div { min-width: 0; }
 .result-grid dt { color: #6b7280; font-size: 10px; }

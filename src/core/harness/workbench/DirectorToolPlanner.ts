@@ -18,6 +18,13 @@ export class DirectorToolPlanner {
   }
 
   private planDeterministic(message: string, context: ProjectContext): PlannedToolInstruction | undefined {
+    if (/(当前|项目|制作|流程|现在).{0,8}(进度|状态|做到哪)|(?:进度|状态|做到哪).{0,8}(当前|项目|制作|流程|现在)|下一步是什么/.test(message)) {
+      return this.build("director.project_status", {}, "查看当前项目制作进度", [], "读取真实产物状态并建议下一步");
+    }
+
+    const productionStage = this.resolveProductionStage(message, context);
+    if (productionStage) return this.buildProductionStage(productionStage, message, context);
+
     const selected = context.selected[0];
     const shot = context.selected.find(ref => ref.type === "shot");
     const shotSize = ["大远景", "远景", "全景", "中全景", "中景", "中近景", "近景", "特写", "大特写"].find(size => message.includes(size));
@@ -54,7 +61,69 @@ export class DirectorToolPlanner {
     if (selected && rollbackMatch && ["script", "beat", "scene", "shot", "character", "prop", "location"].includes(selected.type)) {
       return this.build("artifact.rollback", { artifactType: selected.type, artifactId: selected.id, version: Number(rollbackMatch[1]), reason: message }, `将 ${selected.label || selected.id} 回滚到版本 ${rollbackMatch[1]}`, [selected]);
     }
+    const operationIntent = /创建|新增|添加|生成|制作|改|调整|设置|删除|回滚|恢复|审核|批准|重做|重试|继续|开始|启动|执行/.test(message);
+    if (!operationIntent) return this.build("director.answer", { question: message }, "AI Director 项目答复", [], "基于当前项目上下文回答，不修改数据");
     return undefined;
+  }
+
+  private resolveProductionStage(message: string, context: ProjectContext): "skeleton" | "adaptation" | "development" | "screenplay" | "assets" | "director_plan" | "storyboard" | "video" | "pipeline" | undefined {
+    if (/(完整流程|从小说到(?:电影|视频|成片)|从小说开始|启动.*制片|开始.*制片|一键.*制作|start.*production|novel.*(movie|video|production))/i.test(message)) return "pipeline";
+    if (/(故事骨架|剧情骨架|故事大纲|剧情大纲).{0,8}(生成|创作|分析|重做|开始)|(?:生成|创作|分析|重做|开始).{0,8}(故事骨架|剧情骨架|故事大纲|剧情大纲)/i.test(message)) return "skeleton";
+    if (/(改编策略|改编方案).{0,8}(生成|创作|分析|重做|开始)|(?:生成|创作|分析|重做|开始).{0,8}(改编策略|改编方案)/i.test(message)) return "adaptation";
+    if (/(剧本开发|编剧流程|剧本前期|骨架.*策略)/i.test(message)) return "development";
+    if (/(视频|影片|片段|成片).{0,8}(生成|制作|渲染)|(?:生成|制作|渲染).{0,8}(视频|影片|片段|成片)/i.test(message)) return "video";
+    if (/(分镜|镜头).{0,8}(生成|制作|规划|创建)|(?:生成|制作|规划|创建).{0,8}(分镜|镜头)/i.test(message)) return "storyboard";
+    if (/(人物|角色|道具|场景|资产).{0,8}(生成|提取|分析|设定|造景)|(?:生成|提取|分析|设定|造景).{0,8}(人物|角色|道具|场景|资产)/i.test(message)) return "assets";
+    if (/(导演规划|拍摄规划|镜头规划|制片规划).{0,8}(生成|制作|开始|重做)|(?:生成|制作|开始|重做).{0,8}(导演规划|拍摄规划|镜头规划|制片规划)/i.test(message)) return "director_plan";
+    if (/(小说|原著).{0,12}(剧本|改编)|(?:生成|创作|改编|编写).{0,8}(剧本|脚本)/i.test(message)) return "screenplay";
+    if (/^(开始|启动|开始吧|开始制作|进入剧本agent|开始进入剧本agent)[。！!\s]*$/i.test(message)) return context.productionState.nextStage === "complete" ? undefined : context.productionState.nextStage;
+    if (/^(继续|下一步|继续执行|继续制作|往下做|接着做|加速)[。！!\s]*$/i.test(message)) return context.productionState.nextStage === "complete" ? undefined : context.productionState.nextStage;
+    return undefined;
+  }
+
+  private buildProductionStage(stage: "skeleton" | "adaptation" | "development" | "screenplay" | "assets" | "director_plan" | "storyboard" | "video" | "pipeline", message: string, context: ProjectContext): PlannedToolInstruction {
+    const selectedScene = context.selected.find(ref => ref.type === "scene");
+    const selectedShot = context.selected.find(ref => ref.type === "shot");
+    const selectedScript = context.selected.find(ref => ref.type === "script");
+    const scriptId = selectedScript?.id || context.route.episodeId;
+    const input: Record<string, unknown> = { stage, instruction: message };
+    if (scriptId) input.scriptId = String(scriptId).replace(/^episode:/, "episode:");
+    if (selectedScene) input.sceneId = selectedScene.id;
+    if (selectedShot) input.shotId = selectedShot.id;
+    const labels: Record<typeof stage, string> = {
+      skeleton: "从小说生成故事骨架",
+      adaptation: "生成影视改编策略",
+      development: "完成故事骨架与改编策略",
+      screenplay: "从小说和改编方案生成剧本",
+      assets: "从剧本提取人物、道具和场景设定",
+      director_plan: "生成导演与拍摄规划",
+      storyboard: "根据剧本、资产和导演规划生成分镜",
+      video: "根据选中分镜生成视频片段",
+      pipeline: "运行小说到分镜的完整前期制作流程",
+    };
+    const steps: ActionPlan["steps"] = stage === "pipeline"
+      ? [
+        { toolName: "production.run_stage", purpose: "编剧 Agent 生成故事骨架与改编策略", targetIds: [] },
+        { toolName: "production.run_stage", purpose: "剧本 Agent 生成并写入剧本", targetIds: [] },
+        { toolName: "production.run_stage", purpose: "美术设定 Agent 提取人物、道具和场景", targetIds: [] },
+        { toolName: "production.run_stage", purpose: "总调度导演 Agent 生成拍摄规划", targetIds: [] },
+        { toolName: "production.run_stage", purpose: "分镜制作 Agent 创建镜头计划", targetIds: [] },
+        { toolName: "video.generate_clip", purpose: "视频生成等待用户明确确认", targetIds: [] },
+      ]
+      : [{ toolName: "production.run_stage", purpose: labels[stage], targetIds: [selectedScene, selectedShot, selectedScript].filter(Boolean).map(ref => String(ref!.id)) }];
+    const requiresConfirmation = this.registry.needsConfirmation("production.run_stage", input);
+    return {
+      toolName: "production.run_stage",
+      input,
+      plan: {
+        summary: labels[stage],
+        steps,
+        affectedObjects: [selectedScene, selectedShot, selectedScript].filter((ref): ref is ContextEntityRef => Boolean(ref)),
+        requiresConfirmation,
+        confirmationReason: requiresConfirmation ? "Video provider generation can incur cost and requires final user confirmation." : undefined,
+        estimatedProviderCalls: stage === "pipeline" ? 3 : 1,
+      },
+    };
   }
 
   private async planWithModel(message: string, context: ProjectContext): Promise<PlannedToolInstruction> {

@@ -23,4 +23,5 @@ export * from "./ArtifactGraph";
 export * from "./ContextResolver";
 export * from "./ConversationalDirector";
 export * from "./DirectorToolPlanner";
+export * from "./DirectorCapabilityCatalog";
 export * from "./acceptanceCase";

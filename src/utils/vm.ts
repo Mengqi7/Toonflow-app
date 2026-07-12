@@ -12,7 +12,7 @@ import { createXai } from "@ai-sdk/xai";
 import { createMinimax } from "vercel-minimax-ai-provider";
 import FormData from "form-data";
 import jsonwebtoken from "jsonwebtoken";
-import u from "@/utils";
+import normalizeError from "@/utils/error";
 import crypto from "node:crypto";
 export default function runCode(code: string, vendor?: Record<string, any>) {
   code = code.replace(/export\s*\{\s*\};?/g, ""); // 去掉 export {} 以免沙盒环境报错
@@ -99,7 +99,7 @@ export async function pollTask(
       if (result.completed) return result;
       if (result?.error) return result;
     } catch (e: any) {
-      return { completed: false, error: u.error(e).message || "poll error" };
+      return { completed: false, error: normalizeError(e).message || "poll error" };
     }
     await new Promise((res) => setTimeout(res, interval));
   }

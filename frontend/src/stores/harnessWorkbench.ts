@@ -88,11 +88,27 @@ export default defineStore("harnessWorkbenchV3", () => {
 
   function replaceActionRun(actionRun: HarnessActionRun) {
     const message = [...messages.value].reverse().find(item => item.actionRun?.id === actionRun.id);
-    if (message) message.actionRun = actionRun;
+    if (message) {
+      message.actionRun = actionRun;
+      message.content = actionRun.status === "completed"
+        ? actionRun.result?.reply || actionRun.result?.summary || actionRun.plan.summary
+        : actionRun.status === "awaiting_confirmation"
+          ? "Awaiting your confirmation"
+          : actionRun.error?.message || actionRun.plan.summary;
+      return;
+    }
+    addMessage({
+      id: `director-${actionRun.id}`,
+      role: "director",
+      content: actionRun.status === "awaiting_confirmation" ? "Awaiting your confirmation" : actionRun.plan.summary,
+      actionRun,
+      createdAt: Date.now(),
+    });
   }
 
   function applyActionRun(actionRun: HarnessActionRun) {
-    addMessage({
+    replaceActionRun(actionRun);
+    if (!messages.value.some(item => item.actionRun?.id === actionRun.id)) addMessage({
       id: `director-${actionRun.id}-${Date.now()}`,
       role: "director",
       content: actionRun.status === "completed" ? actionRun.plan.summary : actionRun.status === "awaiting_confirmation" ? "等待确认" : actionRun.error?.message || actionRun.status,

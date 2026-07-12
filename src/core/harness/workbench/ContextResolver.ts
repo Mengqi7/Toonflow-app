@@ -79,6 +79,7 @@ export class ContextResolver {
 
     const pendingReviews = await this.loadPendingReviews(projectId);
     const recentActionRuns = await this.loadRecentActionRuns(projectId);
+    const productionState = await this.loadProductionState(projectId);
 
     return {
       route: page.route,
@@ -91,6 +92,7 @@ export class ContextResolver {
       downstreamArtifacts: graph.downstream,
       pendingReviews: include("pending-reviews", "database", pendingReviews) || [],
       recentActionRuns: include("recent-action-runs", "action-run", recentActionRuns) || [],
+      productionState: include("production-state", "database", productionState) || productionState,
       trace,
       budget: { maxTokens, estimatedTokens: usedTokens, omittedSourceIds },
       resolvedAt: Date.now(),
@@ -145,13 +147,38 @@ export class ContextResolver {
   private async loadRecentActionRuns(projectId: number): Promise<ActionRunSummary[]> {
     if (!(await db.schema.hasTable("o_action_run"))) return [];
     const rows = await db("o_action_run").where("projectId", projectId).orderBy("updatedAt", "desc").limit(10);
-    return rows.map((row: any) => ({
+    return rows.map((row: any) => {
+      const result = this.parseJson<any>(row.result, {});
+      return {
       id: row.id,
       userInstruction: row.userInstruction,
       status: row.status,
       toolNames: this.parseJson(row.toolCalls, []).map((call: any) => call.toolName),
+      stage: result.stage,
       updatedAt: row.updatedAt,
-    }));
+      };
+    });
+  }
+
+  private async loadProductionState(projectId: number) {
+    const workRow = await db("o_agentWorkData").where({ projectId, key: "scriptAgent" }).first();
+    const workData = this.parseJson<any>(workRow?.data, {});
+    const hasNovel = Number((await db("o_novel").where({ projectId }).count({ count: "*" }).first())?.count || 0) > 0;
+    const scriptCount = Number((await db("o_script").where({ projectId }).count({ count: "*" }).first())?.count || 0);
+    const assetCount = await db.schema.hasTable("o_assets") ? Number((await db("o_assets").where({ projectId }).count({ count: "*" }).first())?.count || 0) : 0;
+    const productionRows = await db("o_agentWorkData").where({ projectId, key: "productionAgent" });
+    const hasDirectorPlan = productionRows.some((row: any) => Boolean(this.parseJson<any>(row.data, {}).directorPlan?.trim?.()));
+    const shotCount = await db.schema.hasTable("o_storyboard") ? Number((await db("o_storyboard").where({ projectId }).count({ count: "*" }).first())?.count || 0) : 0;
+    const videoCount = await db.schema.hasTable("o_video") ? Number((await db("o_video").where({ projectId }).count({ count: "*" }).first())?.count || 0) : 0;
+    const hasStorySkeleton = Boolean(workData.storySkeleton?.trim?.());
+    const hasAdaptationStrategy = Boolean(workData.adaptationStrategy?.trim?.());
+    const nextStage = !hasStorySkeleton || !hasAdaptationStrategy ? "development"
+      : !scriptCount ? "screenplay"
+        : !assetCount ? "assets"
+          : !hasDirectorPlan ? "director_plan"
+            : !shotCount ? "storyboard"
+              : videoCount < shotCount ? "video" : "complete";
+    return { hasNovel, hasStorySkeleton, hasAdaptationStrategy, scriptCount, assetCount, hasDirectorPlan, shotCount, videoCount, nextStage } as const;
   }
 
   private parseJson<T>(value: string | null, fallback: T): T {

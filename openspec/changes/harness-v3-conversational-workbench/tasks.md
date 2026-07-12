@@ -54,3 +54,20 @@
 - [x] 7.4 Validate artifact version history and rollback
 - [x] 7.5 Validate provider failure, retry and no-mock behavior
 - [x] 7.6 Validate desktop and narrow viewport layout
+
+## 8. Acceptance repair: one Director and executable production stages
+
+- [x] 8.1 Remove the legacy Script Agent and Production Agent chat panels from the user-facing workspaces
+- [x] 8.2 Bridge the configured legacy Script/Production Agent profiles and skills into typed Harness production-stage tools
+- [x] 8.3 Add deterministic Director planning for screenplay, asset, storyboard, video and pre-production pipeline instructions
+- [x] 8.4 Surface delegated role progress, confirmation and completion evidence in the persistent Director panel
+- [x] 8.5 Verify a no-mouse novel-to-storyboard flow, video confirmation/cancellation, persisted ActionRuns and no duplicate chat UI
+
+## 9. Unified Director intelligence and legacy capability restoration
+
+- [ ] 9.1 Build one capability catalog from Harness agents, Toonflow Agent deployments and all editable Skill files
+- [ ] 9.2 Make Agent model and Skill settings the runtime source of truth for Director delegation
+- [ ] 9.3 Restore story skeleton, adaptation strategy, screenplay, asset, director-plan, storyboard and video stages behind typed Harness tools
+- [ ] 9.4 Persist intermediate outputs into the existing Toonflow script and production workspaces and emit refresh patches
+- [ ] 9.5 Support contextual start, continue, revise, status and general conversation without reporting read-only context as completed production work
+- [ ] 9.6 Show delegated Agent, Skill, model, artifacts and next action in AI Director and verify the complete no-mouse workflow

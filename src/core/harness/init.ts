@@ -315,6 +315,8 @@ export async function initHarness(): Promise<void> {
 
   // P0: AgentRegistry — 扫描并注册全部 Agent
   await harness.agentRegistry.scanAndRegister();
+  const { directorCapabilityCatalog } = await import("./workbench/DirectorCapabilityCatalog");
+  directorCapabilityCatalog.bind(harness.agentRegistry, harness.skillsRegistry);
   const agentList = harness.agentRegistry.listAll();
   console.log(`[Harness] Registered ${agentList.length} agents:`);
   for (const a of agentList) {

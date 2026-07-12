@@ -44,7 +44,7 @@ export abstract class FilmAgent extends BaseAgent {
   protected async generateText(prompt: string, opts?: {
     tools?: ToolDefinition[]; temperature?: number; maxTokens?: number;
   }): Promise<string> {
-    const result = await this.ai.Text("universalAi", false, 0).invoke({
+    const result = await this.ai.Text(this.descriptor.id as any, false, 0).invoke({
       messages: [
         { role: "system", content: this.getSystemPrompt() },
         { role: "user", content: prompt },

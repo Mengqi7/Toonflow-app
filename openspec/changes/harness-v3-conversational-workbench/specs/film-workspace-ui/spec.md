@@ -27,3 +27,21 @@ The system SHALL update visible cards, fields, lists or canvas nodes after a suc
 - **WHEN** the AI completes a scene description tool call
 - **THEN** the selected scene card displays the new description
 - **AND** the conversation shows the changed fields and version
+
+### Requirement: A user workspace must expose only one conversational control surface
+
+The system SHALL use the persistent AI Director as the only user-facing conversational control surface on Script Agent and Production workspaces. Legacy chat panels SHALL not render or establish their old chat connections, while their domain pages continue to show editable screenplay and production outputs.
+
+#### Scenario: User opens Script Agent or Production
+- **WHEN** the user opens either workspace
+- **THEN** the center area displays the existing screenplay editor or production canvas without a second chat panel
+- **AND** the right-side AI Director remains available for all instructions and confirmation actions
+
+### Requirement: Director evidence must identify delegated capabilities
+
+The persistent Director panel SHALL display each delegated Agent role, Toonflow deployment, Skill, resolved model, stage status, produced artifact links and next action. Failed model configuration or malformed Agent output SHALL be shown as a recoverable failure and SHALL NOT be labeled completed.
+
+#### Scenario: Story development completes
+- **WHEN** the skeleton and adaptation Agents finish
+- **THEN** the conversation identifies both delegated capabilities and their output destinations
+- **AND** the Script Agent workspace refreshes to show the generated documents

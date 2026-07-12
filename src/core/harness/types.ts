@@ -105,7 +105,16 @@ export type RuleScope = string;
 export interface Rule { id: string; name: string; scope: RuleScope; priority: number; conflictResolution: "override" | "merge" | "append"; content: string; }
 export type SkillCategory = "text-generation" | "image-generation" | "video-generation" | "audio-generation" | "analysis" | "utility";
 export interface SkillParameter { name: string; type: string; required: boolean; description: string; default?: any; enumValues?: string[]; }
-export interface SkillDescriptor { id: string; name: string; category: SkillCategory; version: string; parameters: SkillParameter[]; content: string; generatedTools?: ToolDefinition[]; }
+export interface SkillDescriptor {
+  id: string;
+  name: string;
+  category: SkillCategory;
+  version: string;
+  parameters: SkillParameter[];
+  content: string;
+  sourcePath?: string;
+  generatedTools?: ToolDefinition[];
+}
 export interface ToolDefinition { type: "function"; function: { name: string; description: string; parameters: Record<string, any>; }; }
 export type MemoryNamespace = string;
 export interface MemoryEntry { id: string; namespace: MemoryNamespace; key: string; value: any; type: "short-term" | "long-term" | "summary" | "rag" | "event"; timestamp: number; ttl?: number; embedding?: number[]; }

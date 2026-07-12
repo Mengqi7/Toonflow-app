@@ -87,15 +87,8 @@
           </div>
         </t-tooltip> -->
       </div>
-      <div class="openRightChatBoxBtn c" v-show="!openShowVisible" @click.stop="openShowVisible = true">
-        <i-menu-unfold-one theme="outline" size="24" />
-      </div>
-      <transition name="slide" v-show="openShowVisible" v-if="episodesId">
-        <rightChatBox :title="title" v-model="flowData" @close="openShowVisible = false" />
-      </transition>
     </div>
     <t-guide v-model="current" :steps="steps" @finish="() => (current = -1)" />
-    <t-tag variant="outline" class="fps" v-if="!openShowVisible">{{ fps }}</t-tag>
   </VueFlow>
 </template>
 
@@ -115,7 +108,6 @@ import storyboardTable from "./node/storyboardTable.vue";
 import storyboard from "./node/storyboard.vue";
 import workbench from "./node/workbench.vue";
 import poster from "./node/poster.vue";
-import rightChatBox from "./components/rightChatBox/index.vue";
 import { useLayout } from "./utils/dagre";
 import { useFlowBuilder } from "./utils/flowBuilder";
 import axios from "@/utils/axios";
@@ -124,7 +116,6 @@ import projectStore from "@/stores/project";
 const { project } = storeToRefs(projectStore());
 import settingStore from "@/stores/setting";
 const { canvasWheelEvent, otherSetting } = storeToRefs(settingStore());
-const openShowVisible = ref(true);
 const {
   toObject,
   fromObject,
@@ -320,10 +311,7 @@ async function getScriptData() {
   if (episodesOptions.value.length) {
     episodesId.value = episodesOptions.value[0].value;
   }
-  if (status.value !== "pending" && status.value !== "streaming") {
-    episodesId.value && (await productionAgentStore().getFlowData());
-    await productionAgentStore().getHistory();
-  }
+  episodesId.value && (await productionAgentStore().getFlowData());
 }
 
 async function layoutGraph(direction: "LR" | "TB" = "LR") {
@@ -463,8 +451,6 @@ watch(
   async (newVal) => {
     if (!newVal || newVal < 0) return;
     await refFlowData();
-    productionAgentStore().updateContext();
-    await productionAgentStore().getHistory();
   },
 );
 
@@ -501,28 +487,6 @@ const steps = [
   },
 ] as any;
 
-const fps = ref(0);
-let lastFrameTime = performance.now();
-let frameCount = 0;
-function animate() {
-  const now = performance.now();
-  frameCount++;
-  const elapsed = now - lastFrameTime;
-  if (elapsed >= 500) {
-    fps.value = Math.round((frameCount * 1000) / elapsed);
-    frameCount = 0;
-    lastFrameTime = now;
-  }
-  if (!openShowVisible.value) {
-    requestAnimationFrame(animate);
-  }
-}
-
-watch(openShowVisible, (val) => {
-  if (!val) {
-    animate();
-  }
-});
 </script>
 <style lang="scss" scoped>
 .flowMain {
@@ -556,27 +520,6 @@ watch(openShowVisible, (val) => {
         }
       }
     }
-    .openRightChatBoxBtn {
-      position: absolute;
-      top: 10px;
-      right: 0;
-      width: 40px;
-      height: 40px;
-      background-color: var(--td-bg-color-secondarycontainer);
-      border-radius: 10px;
-      z-index: 10;
-      cursor: pointer;
-    }
-  }
-  :deep(.slide-enter-active),
-  :deep(.slide-leave-active) {
-    transition: transform 0.3s ease-out;
-  }
-  :deep(.slide-enter-from) {
-    transform: translateX(100%);
-  }
-  :deep(.slide-leave-to) {
-    transform: translateX(100%);
   }
 }
 // 拖拽/平移时优化渲染性能
@@ -619,13 +562,5 @@ $handelSize: 12px;
     cursor: move;
     backdrop-filter: brightness(0.95);
   }
-}
-.fps {
-  position: absolute;
-  bottom: 10px;
-  right: 0px;
-  padding: 2px 6px;
-  font-size: 12px;
-  border-radius: 4px;
 }
 </style>

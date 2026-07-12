@@ -1,5 +1,6 @@
 import fs from "fs";
 import fg from "fast-glob";
+import path from "path";
 import type { SkillDescriptor, SkillCategory, ToolDefinition } from "./types";
 
 export class SkillsRegistry {
@@ -8,10 +9,11 @@ export class SkillsRegistry {
 
   async scanSkills(): Promise<void> {
     const files = await fg(["data/skills/**/*.md"]);
+    this.skills.clear();
     for (const file of files) {
       try {
         const raw = fs.readFileSync(file, "utf-8");
-        const skill = this.parseSkill(raw);
+        const skill = this.parseSkill(raw, file);
         if (skill) this.skills.set(skill.id, skill);
       } catch (err) {
         console.warn(`[SkillsRegistry] Failed to load ${file}:`, err);
@@ -20,23 +22,41 @@ export class SkillsRegistry {
     this.generateTools();
   }
 
-  private parseSkill(raw: string): SkillDescriptor | null {
-    const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-    if (!fmMatch) return null;
+  private parseSkill(raw: string, sourcePath: string): SkillDescriptor | null {
+    const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+    const fmMatch = normalized.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
     const fm: Record<string, any> = {};
-    for (const line of fmMatch[1].split("\n")) {
-      const idx = line.indexOf(":");
-      if (idx > 0) fm[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    if (fmMatch) {
+      for (const line of fmMatch[1].split("\n")) {
+        const idx = line.indexOf(":");
+        if (idx > 0) fm[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      }
     }
     let parameters = [];
     try { parameters = JSON.parse(fm.parameters || "[]"); } catch {}
+    const content = (fmMatch?.[2] || normalized).trim();
+    if (!content) return null;
+    const relative = path.relative(path.resolve("data/skills"), path.resolve(sourcePath)).replace(/\\/g, "/");
+    const inferredId = relative.replace(/\.md$/i, "").replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+    const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
     return {
-      id: fm.id || "", name: fm.name || "",
-      category: (fm.category || "utility") as SkillCategory,
+      id: fm.id || inferredId,
+      name: fm.name || heading || path.basename(sourcePath, ".md"),
+      category: (fm.category || this.inferCategory(relative)) as SkillCategory,
       version: fm.version || "1.0",
       parameters,
-      content: fmMatch[2].trim(),
+      content,
+      sourcePath: path.resolve(sourcePath),
     };
+  }
+
+  private inferCategory(relativePath: string): SkillCategory {
+    if (/story|script|narrative/i.test(relativePath)) return "text-generation";
+    if (/storyboard|art|image/i.test(relativePath)) return "image-generation";
+    if (/video/i.test(relativePath)) return "video-generation";
+    if (/audio|sound|voice/i.test(relativePath)) return "audio-generation";
+    if (/decision|supervision|analysis|derive|planning/i.test(relativePath)) return "analysis";
+    return "utility";
   }
 
   private generateTools(): void {
@@ -71,6 +91,11 @@ export class SkillsRegistry {
   }
 
   get(id: string): SkillDescriptor | undefined { return this.skills.get(id); }
+
+  getBySourceName(fileName: string): SkillDescriptor | undefined {
+    const normalized = fileName.replace(/\\/g, "/").toLowerCase();
+    return [...this.skills.values()].find(skill => skill.sourcePath?.replace(/\\/g, "/").toLowerCase().endsWith(normalized));
+  }
 
   listAll(): SkillDescriptor[] { return [...this.skills.values()]; }
 

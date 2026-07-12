@@ -322,8 +322,9 @@ export class DirectorOrchestrator {
     this.addMessage(instanceId, "user", message);
     const context = await workbenchContextResolver.resolve(contextInput);
     const actionRun = await conversationalDirector.executeInstruction(instanceId, message, context, confirmed);
+    const resultReply = (actionRun.result as any)?.reply || (actionRun.result as any)?.summary;
     const reply = actionRun.status === "completed"
-      ? `已完成：${actionRun.plan.summary}`
+      ? resultReply || `已完成：${actionRun.plan.summary}`
       : actionRun.status === "awaiting_confirmation"
         ? `执行前需要确认：${actionRun.plan.summary}`
         : `执行未完成：${actionRun.error?.message || actionRun.status}`;

@@ -2,7 +2,12 @@ import { generateText, streamText, wrapLanguageModel, stepCountIs, extractReason
 import { devToolsMiddleware } from "@ai-sdk/devtools";
 import axios from "axios";
 import { transform } from "sucrase";
-import u from "@/utils";
+import { db } from "@/utils/db";
+import oss from "@/utils/oss";
+import normalizeError from "@/utils/error";
+import runCode from "@/utils/vm";
+import taskRecord from "@/utils/taskRecord";
+import * as vendor from "@/utils/vendor";
 
 type AiType =
   | "scriptAgent"
@@ -20,7 +25,21 @@ type AiType =
   | "productionAgent:directorPlanAgent"
   | "productionAgent:storyboardGenAgent"
   | "productionAgent:storyboardPanelAgent"
-  | "productionAgent:storyboardTableAgent";
+  | "productionAgent:storyboardTableAgent"
+  | "screenwriter"
+  | "director"
+  | "assistant_director"
+  | "producer"
+  | "script_supervisor"
+  | "set_decorator"
+  | "makeup"
+  | "wardrobe"
+  | "dp"
+  | "editor"
+  | "costume"
+  | "lighting"
+  | "sound"
+  | "vfx";
 
 type FnName = "textRequest" | "imageRequest" | "videoRequest" | "ttsRequest";
 
@@ -41,36 +60,52 @@ const AiTypeValues: AiType[] = [
   "productionAgent:storyboardGenAgent",
   "productionAgent:storyboardPanelAgent",
   "productionAgent:storyboardTableAgent",
+  "screenwriter",
+  "director",
+  "assistant_director",
+  "producer",
+  "script_supervisor",
+  "set_decorator",
+  "makeup",
+  "wardrobe",
+  "dp",
+  "editor",
+  "costume",
+  "lighting",
+  "sound",
+  "vfx",
   "universalAi",
 ];
 async function resolveModelName(value: AiType | `${string}:${string}`): Promise<`${string}:${string}`> {
   if (AiTypeValues.includes(value as AiType)) {
-    const agentUseModeVal = await u.db("o_setting").where("key", "agentUseMode").first();
+    const agentUseModeVal = await db("o_setting").where("key", "agentUseMode").first();
 
     //正常流程
     //高级配置
     if (agentUseModeVal?.value == "1") {
-      const agentDeployData = await u.db("o_agentDeploy").where("key", value).first();
-      if (!agentDeployData?.modelName) throw new Error(`高级配置模式下，未找到对应的模型配置 ${value}`);
-      return agentDeployData?.modelName as `${number}:${string}`;
+      const agentDeployData = await db("o_agentDeploy").where("key", value).first();
+      const fallback = await db("o_agentDeploy").where("key", "universalAi").first();
+      if (!agentDeployData?.modelName && !fallback?.modelName) throw new Error(`高级配置模式下，未找到对应的模型配置 ${value}`);
+      return (agentDeployData?.modelName || fallback!.modelName) as `${number}:${string}`;
     }
     //简易配置
     if (agentUseModeVal?.value == "0") {
       const [mainly] = value!.split(/:(.+)/);
-      const mainlyData = await u.db("o_agentDeploy").where("key", mainly).first();
-      if (!mainlyData?.modelName) throw new Error(`简易配置模式下，未找到部署配置 ${value}`);
-      return mainlyData?.modelName as `${number}:${string}`;
+      const mainlyData = await db("o_agentDeploy").where("key", mainly).first();
+      const fallback = await db("o_agentDeploy").where("key", "universalAi").first();
+      if (!mainlyData?.modelName && !fallback?.modelName) throw new Error(`简易配置模式下，未找到部署配置 ${value}`);
+      return (mainlyData?.modelName || fallback!.modelName) as `${number}:${string}`;
     }
 
     //未查到agentUseModeVal 维持原判断
-    const agentDeployData = await u.db("o_agentDeploy").where("key", value).first();
+    const agentDeployData = await db("o_agentDeploy").where("key", value).first();
     let modelName = null;
 
     if (!agentDeployData?.modelName) {
       // P1 fix: 防御 agentDeployData 为 null
       if (!agentDeployData) throw new Error(`未找到部署配置 ${value}`);
       const [mainly] = agentDeployData.key!.split(/:(.+)/);
-      const mainlyData = await u.db("o_agentDeploy").where("key", mainly).first();
+      const mainlyData = await db("o_agentDeploy").where("key", mainly).first();
       if (!mainlyData?.modelName) throw new Error(`未找到部署配置 ${value}`);
       modelName = mainlyData.modelName;
     }
@@ -82,28 +117,32 @@ async function resolveModelName(value: AiType | `${string}:${string}`): Promise<
 
 async function getModelConfig(value: AiType | `${string}:${string}`) {
   if (AiTypeValues.includes(value as AiType)) {
-    const agentUseModeVal = await u.db("o_setting").where("key", "agentUseMode").first();
+    const agentUseModeVal = await db("o_setting").where("key", "agentUseMode").first();
     //正常流程
     //高级配置
     if (agentUseModeVal?.value == "1") {
-      const agentDeployData = await u.db("o_agentDeploy").where("key", value).first();
-      if (!agentDeployData?.modelName) throw new Error(`高级配置模式下，未找到对应的模型配置 ${value}`);
-      return agentDeployData;
+      const agentDeployData = await db("o_agentDeploy").where("key", value).first();
+      if (agentDeployData?.modelName) return agentDeployData;
+      const fallback = await db("o_agentDeploy").where("key", "universalAi").first();
+      if (!fallback?.modelName) throw new Error(`高级配置模式下，未找到对应的模型配置 ${value}`);
+      return fallback;
     }
     //简易配置
     if (agentUseModeVal?.value == "0") {
       const [mainly] = value!.split(/:(.+)/);
-      const mainlyData = await u.db("o_agentDeploy").where("key", mainly).first();
-      if (!mainlyData?.modelName) throw new Error(`简易配置模式下，未找到部署配置 ${value}`);
-      return mainlyData;
+      const mainlyData = await db("o_agentDeploy").where("key", mainly).first();
+      if (mainlyData?.modelName) return mainlyData;
+      const fallback = await db("o_agentDeploy").where("key", "universalAi").first();
+      if (!fallback?.modelName) throw new Error(`简易配置模式下，未找到部署配置 ${value}`);
+      return fallback;
     }
 
     //未查到 agentUseModelVal 维持原流程
-    const agentDeployData = await u.db("o_agentDeploy").where("key", value).first();
+    const agentDeployData = await db("o_agentDeploy").where("key", value).first();
 
     if (!agentDeployData?.modelName) {
       const [mainly] = agentDeployData!.key!.split(/:(.+)/);
-      const mainlyData = await u.db("o_agentDeploy").where("key", mainly).first();
+      const mainlyData = await db("o_agentDeploy").where("key", mainly).first();
       if (!mainlyData?.modelName) throw new Error(`未找到部署配置 ${value}`);
       return mainlyData;
     }
@@ -119,14 +158,14 @@ async function getVendorTemplateFn(
 async function getVendorTemplateFn(fnName: Exclude<FnName, "textRequest">, modelName: `${string}:${string}`): Promise<(input: any) => any>;
 async function getVendorTemplateFn(fnName: FnName, modelName: `${string}:${string}`): Promise<any> {
   const [id, name] = modelName.split(/:(.+)/);
-  const vendorConfigData = await u.db("o_vendorConfig").where("id", id).first();
+  const vendorConfigData = await db("o_vendorConfig").where("id", id).first();
   if (!vendorConfigData) throw new Error(`未找到供应商配置 id=${id}`);
-  const modelList = await u.vendor.getModelList(id);
+  const modelList = await vendor.getModelList(id);
   const selectedModel = modelList.find((i: any) => i.modelName == name);
   if (!selectedModel) throw new Error(`未找到模型 ${name} id=${id}`);
-  const code = u.vendor.getCode(id);
+  const code = vendor.getCode(id);
   const jsCode = transform(code, { transforms: ["typescript"] }).code;
-  const running = u.vm(jsCode);
+  const running = runCode(jsCode);
   if (running.vendor) {
     Object.assign(running.vendor.inputValues, JSON.parse(vendorConfigData.inputValues ?? "{}"));
     running.vendor.models = modelList;
@@ -151,15 +190,15 @@ async function withTaskRecord<T>(
 ): Promise<T> {
   const modelName = await resolveModelName(modelKey);
   const [_, model] = modelName.split(/:(.+)/);
-  const taskRecord = await u.task(projectId, taskClass, model, { describe: describe, content: relatedObjects });
+  const taskRecordHandler = await taskRecord(projectId, taskClass, model, { describe: describe, content: relatedObjects });
   try {
     const result = await fn(modelName, false, 0);
 
-    taskRecord(1);
+    taskRecordHandler(1);
     return result;
   } catch (e) {
-    taskRecord(-1, u.error(e).message);
-    throw new Error(u.error(e).message);
+    taskRecordHandler(-1, normalizeError(e).message);
+    throw new Error(normalizeError(e).message);
   }
 }
 
@@ -186,7 +225,7 @@ class AiText {
     this.thinkLevel = thinkLevel;
   }
   private async resolveModel(middleware?: any | any[]) {
-    const switchAiDevTool = await u.db("o_setting").where("key", "switchAiDevTool").first();
+    const switchAiDevTool = await db("o_setting").where("key", "switchAiDevTool").first();
     const modelName = await resolveModelName(this.AiType);
     const sdkFn = await getVendorTemplateFn("textRequest", modelName);
     const baseModel = await sdkFn(this.think, this.thinkLevel);
@@ -221,7 +260,7 @@ class AiText {
 }
 
 function referenceList2imageBase642(id: string, input: any) {
-  const version = u.vendor.getVendor(id).version;
+  const version = vendor.getVendor(id).version;
   if (!version || isNaN(parseFloat(version)) || parseFloat(version) < 2.0) {
     input.imageBase64 = input.referenceList.map((item: any) => item.base64);
     return input;
@@ -268,7 +307,7 @@ class AiImage {
     return this;
   }
   async save(path: string) {
-    await u.oss.writeFile(path, this.result);
+    await oss.writeFile(path, this.result);
     return this;
   }
 }
@@ -319,7 +358,7 @@ class AiVideo {
     }
   }
   async save(path: string) {
-    await u.oss.writeFile(path, this.result);
+    await oss.writeFile(path, this.result);
     return this;
   }
 }
@@ -347,7 +386,7 @@ class AiAudio {
     return await exec(modelName);
   }
   async save(path: string) {
-    await u.oss.writeFile(path, this.result);
+    await oss.writeFile(path, this.result);
     return this;
   }
 }

@@ -3,12 +3,15 @@ import { toonflowDomainService, type UpdateShotInput, type UpdateShotOutput } fr
 import { filmDomainService } from "../domain/FilmDomainService";
 import { artifactVersionService } from "../domain/ArtifactVersionService";
 import type { ProductionDomainService } from "../domain/ProductionDomainService";
+import Ai from "@/utils/ai";
 import { reviewDomainService } from "../domain/ReviewDomainService";
+import { ProductionStageService } from "../workbench/ProductionStageService";
 import { ToolRegistry } from "./ToolRegistry";
 
 export function registerDomainTools(registry: ToolRegistry, production: ProductionDomainService): ToolRegistry {
   const genericObjectOutput = { type: "object", additionalProperties: true } as const;
   const stringId = (kind: string) => ({ type: "string", pattern: `^${kind}:.+$` });
+  const stages = new ProductionStageService(production);
 
   registry.register({
     name: "project.read_context",
@@ -19,6 +22,66 @@ export function registerDomainTools(registry: ToolRegistry, production: Producti
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
     outputSchema: genericObjectOutput,
     execute: async (_input, context) => context.projectContext,
+  });
+
+  registry.register({
+    name: "director.project_status",
+    description: "汇总当前项目从小说、编剧、资产、分镜到视频的真实完成状态和下一步。",
+    authorization: "read",
+    idempotency: "none",
+    requiresConfirmation: false,
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    outputSchema: genericObjectOutput,
+    execute: async (_input, context) => {
+      const state = context.projectContext.productionState;
+      return {
+        summary: `当前项目：骨架${state.hasStorySkeleton ? "已完成" : "未完成"}，改编策略${state.hasAdaptationStrategy ? "已完成" : "未完成"}，剧本 ${state.scriptCount} 个，资产 ${state.assetCount} 个，分镜 ${state.shotCount} 个，视频 ${state.videoCount} 个。`,
+        reply: `当前制作进度：\n- 故事骨架：${state.hasStorySkeleton ? "已完成" : "未完成"}\n- 改编策略：${state.hasAdaptationStrategy ? "已完成" : "未完成"}\n- 剧本：${state.scriptCount} 个\n- 资产：${state.assetCount} 个\n- 导演规划：${state.hasDirectorPlan ? "已完成" : "未完成"}\n- 分镜：${state.shotCount} 个\n- 视频：${state.videoCount}/${state.shotCount} 个\n\n建议下一步：${state.nextStage}`,
+        productionState: state,
+        nextAction: state.nextStage,
+        noMutation: true,
+      };
+    },
+  });
+
+  registry.register({
+    name: "director.answer",
+    description: "基于当前项目上下文回答不需要修改业务数据的开放式问题。",
+    authorization: "read",
+    idempotency: "none",
+    requiresConfirmation: false,
+    inputSchema: { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string", minLength: 1 } } },
+    outputSchema: genericObjectOutput,
+    execute: async (input: any, context) => {
+      const result = await Ai.Text("universalAi", false, 0).invoke({ messages: [
+        { role: "system", content: "你是 Toonflow AI Director。基于给定项目上下文直接、专业地回答。不要声称已修改或生成任何产物。" },
+        { role: "user", content: `项目上下文：${JSON.stringify({ project: context.projectContext.project, route: context.projectContext.route, productionState: context.projectContext.productionState, selected: context.projectContext.selected })}\n\n用户问题：${input.question}` },
+      ] });
+      return { reply: result.text.trim(), noMutation: true };
+    },
+  });
+
+  registry.register({
+    name: "production.run_stage",
+    description: "Run an AI Director production stage using the existing Script and Production Agent profiles, then write the result into Toonflow domain records.",
+    authorization: "generate",
+    idempotency: "action_run",
+    requiresConfirmation: (input: any) => input.stage === "video",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["stage"],
+      properties: {
+        stage: { enum: ["skeleton", "adaptation", "development", "screenplay", "assets", "director_plan", "storyboard", "video", "pipeline"] },
+        instruction: { type: "string" },
+        scriptId: { type: "string", pattern: "^(script|episode):.+$" },
+        sceneId: stringId("scene"),
+        shotId: stringId("shot"),
+        mode: { enum: ["ai", "draft"] },
+      },
+    },
+    outputSchema: genericObjectOutput,
+    execute: async (input: any, context) => stages.run(context.actionRun, input, context.projectContext, context.reportProgress),
   });
 
   registry.register({

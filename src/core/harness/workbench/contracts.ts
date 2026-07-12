@@ -58,6 +58,7 @@ export interface ProjectContext {
   downstreamArtifacts: ContextEntityRef[];
   pendingReviews: Array<Record<string, unknown>>;
   recentActionRuns: ActionRunSummary[];
+  productionState: ProductionState;
   trace: ContextSourceTrace[];
   budget: {
     maxTokens: number;
@@ -65,6 +66,18 @@ export interface ProjectContext {
     omittedSourceIds: string[];
   };
   resolvedAt: number;
+}
+
+export interface ProductionState {
+  hasNovel: boolean;
+  hasStorySkeleton: boolean;
+  hasAdaptationStrategy: boolean;
+  scriptCount: number;
+  assetCount: number;
+  hasDirectorPlan: boolean;
+  shotCount: number;
+  videoCount: number;
+  nextStage: "development" | "screenplay" | "assets" | "director_plan" | "storyboard" | "video" | "complete";
 }
 
 export type ActionRunStatus = "planned" | "awaiting_confirmation" | "running" | "completed" | "failed" | "cancelled";
@@ -103,6 +116,7 @@ export interface ActionRunSummary {
   userInstruction: string;
   status: ActionRunStatus;
   toolNames: string[];
+  stage?: string;
   updatedAt: number;
 }
 

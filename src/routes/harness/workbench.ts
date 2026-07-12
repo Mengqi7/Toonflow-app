@@ -6,6 +6,7 @@ import {
   workbenchContextResolver,
   workbenchToolRegistry,
   workbenchToolRuntime,
+  directorCapabilityCatalog,
 } from "@/core/harness/workbench";
 
 const router = express.Router();
@@ -37,6 +38,10 @@ router.post("/context", async (req, res) => {
 
 router.get("/tools", (_req, res) => {
   res.json({ code: 200, data: workbenchToolRegistry.list() });
+});
+
+router.get("/capabilities", async (_req, res) => {
+  res.json({ code: 200, data: await directorCapabilityCatalog.list() });
 });
 
 router.post("/:instanceId/instructions", async (req, res) => {

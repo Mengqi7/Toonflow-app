@@ -36,6 +36,7 @@
     "dist:linux": "yarn build:desktop && electron-builder --linux",
     "debug:ai": "npx @ai-sdk/devtools",
     "verify:harness-v3": "tsx scripts/verify-harness-v3.ts",
+    "verify:harness-v3:ai": "tsx scripts/verify-harness-v3-ai.ts",
     "license": "node scripts/license.ts",
     "vendor2json": "node scripts/vendor2json.ts"
   },
