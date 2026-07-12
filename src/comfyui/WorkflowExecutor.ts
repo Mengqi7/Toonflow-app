@@ -68,7 +68,8 @@ export class WorkflowExecutor {
     const promptId = await client.queuePrompt(apiPrompt as any);
 
     // 6. 等待完成 (轮询)
-    const history = await client.waitForCompletion(promptId, onProgress);
+    if (onProgress) client.onProgress(onProgress);
+    const history = await client.waitForCompletion(promptId);
 
     // 7. 提取产物
     const assets = resultHandler.extractOutputs(history);

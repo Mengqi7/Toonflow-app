@@ -169,6 +169,8 @@ export default async function startServe(randomPort: Boolean = false) {
     }
   });
 
+  const { initHarness } = await import("@/core/harness/init");
+  await initHarness();
   const router = await import("@/router");
   await router.default(app);
 

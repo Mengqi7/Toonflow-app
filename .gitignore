@@ -53,5 +53,6 @@ database.d.ts
 
 .devtools
 data/oss/*
+data/web/
 data/test.sqlite
 version.txtrun.log

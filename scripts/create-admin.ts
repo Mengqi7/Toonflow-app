@@ -4,7 +4,6 @@ const db = knex({
   client: "better-sql3",
   connection: {
     filename: "./data/db2.sqlite",
-    timeout: 30000,
   },
 });
 

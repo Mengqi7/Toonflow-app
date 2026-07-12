@@ -1,0 +1,30 @@
+## ADDED Requirements
+
+### Requirement: AI Director must operate as the primary project control surface
+
+The system SHALL provide a persistent AI Director conversation in every film-production workspace, and SHALL treat messages as executable project instructions rather than chat-only content.
+
+#### Scenario: User asks to revise a shot
+- **WHEN** the user says “把第 3 场的第 2 个镜头改成中近景，保留人物服装和场景不变”
+- **THEN** the system resolves the current episode, scene, shot and locked references
+- **AND** creates a structured execution plan
+- **AND** shows the affected objects before applying the change
+
+### Requirement: Conversation results must include operation evidence
+
+The system SHALL show the plan, tools used, changed fields, generated artifacts, versions and review status for every write operation.
+
+#### Scenario: Tool execution completes
+- **WHEN** a tool successfully updates a storyboard shot
+- **THEN** the conversation shows the updated shot ID and changed fields
+- **AND** the active storyboard workspace refreshes without a full page reload
+- **AND** an ActionRun is persisted
+
+### Requirement: High-impact actions must require user confirmation
+
+The system SHALL require confirmation before batch generation, destructive changes, cross-stage reroutes, rollback and final approval.
+
+#### Scenario: User requests batch image generation
+- **WHEN** the user asks to generate images for all shots in a scene
+- **THEN** the system shows count, estimated provider calls, target objects and expected artifacts
+- **AND** waits for explicit confirmation before dispatching generation

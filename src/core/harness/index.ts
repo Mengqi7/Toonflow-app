@@ -11,6 +11,11 @@ export { TaskGraph } from "./TaskGraph";
 export { CallbackBridge, callbackBridge } from "./CallbackBridge";
 export { DirectorOrchestrator, initDirectorOrchestrator, directorOrchestrator } from "./DirectorOrchestrator";
 export { DirectorLLMPlanner } from "./DirectorLLMPlanner";
+export * from "./workbench";
+export * from "./tools/ToolRegistry";
+export * from "./tools/ToolRuntime";
+export * from "./tools/ActionRunStore";
+export * from "./generation";
 export type { PlannerState, DirectorDecision } from "./DirectorLLMPlanner";
 export {
   AgentExecutionError,

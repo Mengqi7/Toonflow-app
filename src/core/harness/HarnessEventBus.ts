@@ -10,6 +10,19 @@
 import { EventEmitter } from "events";
 import { v4 as uuid } from "uuid";
 import type { HarnessEvent } from "./types";
+import type { DomainEvent, ProjectContext, UiPatch } from "./workbench/contracts";
+
+export interface UiPatchEvent {
+  id: string;
+  kind: "ui.patch";
+  actionRunId: string;
+  instanceId: string;
+  projectId: ProjectContext["route"]["projectId"];
+  patch: UiPatch;
+  timestamp: number;
+}
+
+export type HarnessBusEvent = HarnessEvent | DomainEvent | UiPatchEvent;
 
 export class HarnessEventBus extends EventEmitter {
   private static _instance: HarnessEventBus | null = null;
@@ -51,8 +64,39 @@ export class HarnessEventBus extends EventEmitter {
     return event.id;
   }
 
+  async emitWorkbenchEvent(partial: Omit<DomainEvent, "id" | "timestamp">): Promise<string> {
+    const event: DomainEvent = { ...partial, id: `evt-${uuid()}`, timestamp: Date.now() };
+    this.broadcast(event);
+    this.persistEvent(event).catch(err => {
+      console.warn("[HarnessEventBus] Failed to persist workbench event:", err instanceof Error ? err.message : err);
+    });
+    return event.id;
+  }
+
+  async emitUiPatch(patch: UiPatch, instanceId: string, projectId: UiPatchEvent["projectId"]): Promise<string> {
+    const event: UiPatchEvent = {
+      id: `evt-${uuid()}`,
+      kind: "ui.patch",
+      actionRunId: patch.actionRunId,
+      instanceId,
+      projectId,
+      patch,
+      timestamp: Date.now(),
+    };
+    this.broadcast(event);
+    this.persistEvent(event).catch(err => {
+      console.warn("[HarnessEventBus] Failed to persist UI patch:", err instanceof Error ? err.message : err);
+    });
+    return event.id;
+  }
+
+  private broadcast(event: HarnessBusEvent): void {
+    this.emit(event.kind, event);
+    this.emit("*", event);
+  }
+
   /** 持久化事件到 MemoryBus */
-  private async persistEvent(event: HarnessEvent): Promise<void> {
+  private async persistEvent(event: HarnessBusEvent): Promise<void> {
     if (this.persisted.has(event.id)) return;
     this.persisted.add(event.id);
 
@@ -72,7 +116,7 @@ export class HarnessEventBus extends EventEmitter {
    * @param afterEventId 仅返回 id 在此之后的事件 (Last-Event-ID)
    * @returns 历史事件数组
    */
-  async replayEvents(instanceId: string, afterEventId?: string): Promise<HarnessEvent[]> {
+  async replayEvents(instanceId: string, afterEventId?: string): Promise<HarnessBusEvent[]> {
     if (!this.memoryBus) return [];
     const entries = await this.memoryBus.get({
       namespaces: [`event:${instanceId}`],
@@ -80,13 +124,13 @@ export class HarnessEventBus extends EventEmitter {
       limit: 1000,
     });
     // 按时间排序
-    const events: HarnessEvent[] = entries
-      .map(e => {
+    const events: HarnessBusEvent[] = entries
+      .map((e: any): HarnessBusEvent | null => {
         try { return typeof e.value === "string" ? JSON.parse(e.value) : e.value; }
         catch { return null; }
       })
-      .filter(e => e && e.id && e.kind && e.timestamp)
-      .sort((a, b) => a.timestamp - b.timestamp);
+      .filter((e: HarnessBusEvent | null): e is HarnessBusEvent => Boolean(e?.id && e.kind && e.timestamp))
+      .sort((a: HarnessBusEvent, b: HarnessBusEvent) => a.timestamp - b.timestamp);
 
     if (!afterEventId) return events;
 
@@ -97,8 +141,8 @@ export class HarnessEventBus extends EventEmitter {
   }
 
   /** 订阅某 instanceId 的事件 (返回取消订阅函数) */
-  subscribeInstance(instanceId: string, handler: (event: HarnessEvent) => void): () => void {
-    const filtered = (event: HarnessEvent) => {
+  subscribeInstance(instanceId: string, handler: (event: HarnessBusEvent) => void): () => void {
+    const filtered = (event: HarnessBusEvent) => {
       if ((event as any).instanceId === instanceId || (event as any).instanceId === undefined) {
         handler(event);
       }

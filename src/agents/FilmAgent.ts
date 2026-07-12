@@ -133,11 +133,9 @@ export abstract class FilmAgent extends BaseAgent {
     const wf = parser.parse(workflow.workflow_json);
     const params = parser.extractParameters(wf);
     const promptParams: Record<string, any> = {};
-    for (const p of params) {
-      for (const param of p.parameters) {
-        if (param.type === "string" && (param.name.toLowerCase().includes("prompt") || param.name.toLowerCase().includes("text"))) {
-          promptParams[`${p.nodeId}_${param.widgetName}`] = prompt;
-        }
+    for (const param of params) {
+      if (param.type === "string" && (param.name.toLowerCase().includes("prompt") || param.name.toLowerCase().includes("text"))) {
+        promptParams[param.id] = prompt;
       }
     }
     const injected = parser.injectParameters(wf, promptParams);

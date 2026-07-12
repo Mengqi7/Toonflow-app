@@ -16,9 +16,8 @@ if (-not $node) {
 Write-Host "[OK] Node.js $($node.Version)" -ForegroundColor Green
 
 # Paths
-$backendDir = "E:\workspace\Toonflow-app"
-$frontendDir = "E:\workspace\Toonflow-web"
-$pssDir = (Get-Location).Path
+$backendDir = Split-Path -Parent $PSScriptRoot
+$frontendDir = Join-Path $backendDir "frontend"
 
 Write-Host ""
 Write-Host "[Dirs]" -ForegroundColor Yellow
@@ -129,7 +128,7 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$backendDir';
 # Start frontend if exists
 if (Test-Path $frontendDir) {
     Write-Host "[2/2] Starting frontend..." -ForegroundColor Cyan
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$frontendDir'; Write-Host '[Frontend]' -ForegroundColor Green; npx vite --host"
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$frontendDir'; Write-Host '[Frontend]' -ForegroundColor Green; yarn dev"
 }
 
 # Done

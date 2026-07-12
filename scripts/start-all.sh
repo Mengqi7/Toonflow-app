@@ -10,8 +10,9 @@ echo "   🚀 ToonFlow 项目启动器"
 echo "========================================"
 
 # --- 定义路径 ---
-BACKEND_DIR="$HOME/workspace/Toonflow-app"
-FRONTEND_DIR="$HOME/workspace/Toonflow-web"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+FRONTEND_DIR="$BACKEND_DIR/frontend"
 
 # --- 检查依赖 ---
 if ! command -v node &> /dev/null; then

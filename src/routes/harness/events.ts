@@ -11,7 +11,7 @@
  */
 import express from "express";
 import { harnessEventBus } from "@/core/harness/HarnessEventBus";
-import type { HarnessEvent } from "@/core/harness/types";
+import type { HarnessBusEvent } from "@/core/harness/HarnessEventBus";
 
 const router = express.Router();
 
@@ -44,7 +44,7 @@ router.get("/stream", async (req: express.Request, res: express.Response) => {
   }
 
   // 2. 订阅实时事件
-  const unsubscribe = harnessEventBus.subscribeInstance(instanceId, (event: HarnessEvent) => {
+  const unsubscribe = harnessEventBus.subscribeInstance(instanceId, (event: HarnessBusEvent) => {
     try {
       sendEvent(res, event);
     } catch (err) {
@@ -74,7 +74,7 @@ router.get("/stream", async (req: express.Request, res: express.Response) => {
 });
 
 /** 发送一个 SSE 事件 */
-function sendEvent(res: express.Response, event: HarnessEvent): void {
+function sendEvent(res: express.Response, event: HarnessBusEvent): void {
   const data = JSON.stringify(event);
   res.write(`id: ${event.id}\n`);
   res.write(`event: ${event.kind}\n`);

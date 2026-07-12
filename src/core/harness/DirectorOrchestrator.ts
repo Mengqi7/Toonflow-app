@@ -11,7 +11,9 @@ import { TaskGraph } from "./TaskGraph";
 import { harnessEventBus } from "./HarnessEventBus";
 import { callbackBridge } from "./CallbackBridge";
 import { DirectorLLMPlanner } from "./DirectorLLMPlanner";
-import type { PlannerState, DirectorDecision } from "./DirectorLLMPlanner";
+import type { PlannerState } from "./DirectorLLMPlanner";
+import { conversationalDirector, workbenchContextResolver } from "./workbench";
+import type { ActionRun, WorkbenchContextInput } from "./workbench/contracts";
 import { wrapAsAgentError } from "./errors";
 import type { AgentRegistry, MemoryBus, RulesEngine, SkillsRegistry, MCPConnector, WorkflowRunner } from "./index";
 
@@ -309,6 +311,24 @@ export class DirectorOrchestrator {
     }
 
     return { reply };
+  }
+
+  async handleWorkbenchInstruction(
+    instanceId: string,
+    message: string,
+    contextInput: WorkbenchContextInput,
+    confirmed = false,
+  ): Promise<{ reply: string; actionRun: ActionRun }> {
+    this.addMessage(instanceId, "user", message);
+    const context = await workbenchContextResolver.resolve(contextInput);
+    const actionRun = await conversationalDirector.executeInstruction(instanceId, message, context, confirmed);
+    const reply = actionRun.status === "completed"
+      ? `已完成：${actionRun.plan.summary}`
+      : actionRun.status === "awaiting_confirmation"
+        ? `执行前需要确认：${actionRun.plan.summary}`
+        : `执行未完成：${actionRun.error?.message || actionRun.status}`;
+    this.addMessage(instanceId, "director", reply);
+    return { reply, actionRun };
   }
 
   /**

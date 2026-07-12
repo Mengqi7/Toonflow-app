@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Harness V2 Prototype</title>
+<style>
+  :root{
+    --bg:#071018;
+    --panel:#0b1d2b;
+    --panel2:#10293d;
+    --line:rgba(77,243,255,.45);
+    --cyan:#4df3ff;
+    --violet:#c35cff;
+    --green:#61ffbe;
+    --red:#ff5c9a;
+    --amber:#ffd166;
+    --text:#eaf8ff;
+    --muted:#91aabc;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:
+    radial-gradient(circle at 16% 14%, rgba(77,243,255,.14), transparent 24%),
+    radial-gradient(circle at 84% 22%, rgba(195,92,255,.12), transparent 22%),
+    linear-gradient(135deg, #061019 0%, #09131d 50%, #070b13 100%);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  button,input{font:inherit;color:inherit}
+  .app{height:100%;display:grid;grid-template-rows:72px 1fr;gap:16px;padding:18px}
+  .topbar{display:grid;grid-template-columns:340px 1fr auto;align-items:center;gap:14px;padding:0 18px;border:1px solid rgba(97,219,255,.34);border-radius:18px;background:linear-gradient(180deg, rgba(16,41,61,.92), rgba(8,20,30,.9));box-shadow:0 0 30px rgba(77,243,255,.08)}
+  .brand .kicker{color:var(--cyan);font-size:12px;font-weight:800;letter-spacing:1px}
+  .brand h1{margin:4px 0 0;font-size:22px;line-height:1.1}
+  .mission{min-width:0}
+  .mission b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mission span{display:block;margin-top:5px;color:var(--muted);font-size:12px}
+  .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill,.btn{height:34px;padding:0 14px;border-radius:17px;border:1px solid rgba(97,219,255,.32);background:rgba(7,18,30,.72)}
+  .pill{display:inline-flex;align-items:center;color:var(--cyan);font-size:12px}
+  .btn{cursor:pointer}
+  .btn.primary{background:linear-gradient(135deg, rgba(77,243,255,.95), rgba(21,136,255,.95));border-color:transparent;color:#061019;font-weight:800}
+  .layout{min-height:0;display:grid;grid-template-columns:320px minmax(640px,1fr) 330px;gap:16px}
+  .panel{min-height:0;border:1px solid rgba(97,219,255,.28);border-radius:18px;background:linear-gradient(180deg, rgba(11,29,43,.9), rgba(7,18,30,.94));overflow:hidden;box-shadow:0 0 24px rgba(77,243,255,.06)}
+  .head{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid rgba(97,219,255,.14)}
+  .head h2{margin:0;font-size:18px}
+  .scroll{overflow:auto}
+  .left{display:grid;grid-template-rows:auto 1fr}
+  .chat{padding:14px}
+  .chatbox{display:grid;gap:10px}
+  .bubble{padding:12px;border-radius:14px;border:1px solid rgba(97,219,255,.18);background:rgba(9,26,40,.72);line-height:1.6}
+  .bubble.user{border-color:rgba(77,243,255,.38);background:rgba(77,243,255,.07)}
+  .bubble.system{border-color:rgba(195,92,255,.34);background:rgba(195,92,255,.07)}
+  .prompt{display:flex;gap:8px;margin-top:12px}
+  .prompt input{flex:1;height:40px;padding:0 14px;border:1px solid rgba(97,219,255,.2);border-radius:20px;background:rgba(2,12,20,.65);outline:none}
+  .nav{padding:14px;border-top:1px solid rgba(97,219,255,.1)}
+  .nav-item{display:flex;justify-content:space-between;align-items:center;padding:12px 12px;border:1px solid rgba(97,219,255,.14);border-radius:12px;background:rgba(9,26,40,.62);margin-bottom:10px;cursor:pointer}
+  .nav-item.active{border-color:var(--cyan);box-shadow:0 0 20px rgba(77,243,255,.16)}
+  .nav-item .sub{color:var(--muted);font-size:12px;margin-top:4px}
+  .center{display:grid;grid-template-rows:1fr 220px}
+  .stage{padding:16px}
+  .stage-title{display:flex;justify-content:space-between;gap:14px;align-items:start;margin-bottom:14px}
+  .stage-title h2{margin:0 0 6px;font-size:24px}
+  .stage-title p{margin:0;color:var(--muted);line-height:1.55}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap}
+  .tab{height:30px;padding:0 12px;border-radius:15px;border:1px solid rgba(97,219,255,.18);background:rgba(7,18,30,.7)}
+  .tab.active{border-color:var(--cyan);background:rgba(77,243,255,.1)}
+  .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .card{padding:14px;border:1px solid rgba(97,219,255,.18);border-radius:14px;background:rgba(9,26,40,.66)}
+  .card h3{margin:0 0 8px;font-size:15px;color:var(--cyan)}
+  .card p{margin:0;color:#d8f5ff;line-height:1.55;font-size:13px;white-space:pre-wrap}
+  .card pre{margin:0;color:#d8f5ff;line-height:1.5;white-space:pre-wrap;word-break:break-word;font-size:12px;font-family:Consolas,monospace}
+  .tower{display:grid;grid-template-rows:56px 1fr}
+  .tower-list{position:relative;padding:16px 18px 20px 38px}
+  .tower-list:before{content:"";position:absolute;left:42px;top:26px;bottom:30px;width:2px;background:linear-gradient(180deg, transparent, var(--cyan), var(--violet), transparent)}
+  .station{position:relative;display:grid;grid-template-columns:1fr auto;gap:8px;margin:10px 0;padding:12px 12px 12px 22px;border-radius:12px;border:1px solid rgba(97,219,255,.16);background:rgba(9,26,40,.68)}
+  .station:before{content:"";position:absolute;left:-28px;top:calc(50% - 6px);width:12px;height:12px;border-radius:50%;background:var(--cyan);box-shadow:0 0 16px var(--cyan)}
+  .station.active{border-color:var(--cyan);box-shadow:0 0 18px rgba(77,243,255,.18)}
+  .station.return{border-color:rgba(255,92,154,.55)}
+  .station b{display:block}
+  .station small{display:block;margin-top:4px;color:var(--muted);line-height:1.35}
+  .badge{display:inline-flex;align-items:center;justify-content:center;height:24px;padding:0 10px;border-radius:12px;border:1px solid rgba(97,219,255,.22);font-size:12px;color:var(--muted)}
+  .badge.pass{color:var(--green);border-color:rgba(97,255,190,.55)}
+  .badge.review{color:var(--violet);border-color:rgba(195,92,255,.55)}
+  .badge.return{color:var(--red);border-color:rgba(255,92,154,.55)}
+  .badge.run{color:var(--cyan);border-color:rgba(77,243,255,.55)}
+  .right{display:grid;grid-template-rows:auto 1fr}
+  .right-section{padding:14px;border-top:1px solid rgba(97,219,255,.12)}
+  .metric{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .metric .m{padding:10px;border-radius:12px;border:1px solid rgba(97,219,255,.16);background:rgba(9,26,40,.6)}
+  .metric .m span{display:block;color:var(--muted);font-size:12px}
+  .metric .m b{display:block;margin-top:5px;color:var(--cyan);font-size:20px}
+  .artifact{display:grid;gap:10px}
+  .artifact-card{padding:12px;border-radius:14px;border:1px solid rgba(97,219,255,.16);background:rgba(9,26,40,.66)}
+  .artifact-card.pass{border-color:rgba(97,255,190,.4)}
+  .artifact-card.return{border-color:rgba(255,92,154,.45)}
+  .artifact-card span{display:block;color:var(--cyan);font-size:12px;font-weight:800}
+  .artifact-card b{display:block;margin-top:6px}
+  .artifact-card p{margin:6px 0 0;color:var(--muted);font-size:12px;line-height:1.45}
+  .pipeline{position:relative;min-height:0;overflow:hidden}
+  .pipeline:before{content:"";position:absolute;left:18px;right:18px;top:50%;height:2px;background:linear-gradient(90deg,var(--cyan),var(--violet),var(--green));box-shadow:0 0 14px rgba(77,243,255,.3)}
+  .node{position:relative;z-index:1;padding:14px;border-radius:16px;border:1px solid rgba(97,219,255,.18);background:rgba(7,18,30,.88)}
+  .node.hot{border-color:var(--cyan);box-shadow:0 0 18px rgba(77,243,255,.16)}
+  .node.return{border-color:var(--red)}
+  .node b,.node span,.node small{display:block}
+  .node span{color:var(--cyan);font-size:12px;font-weight:800}
+  .node b{margin-top:6px}
+  .node small{margin-top:8px;color:var(--muted);line-height:1.45}
+  .flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:14px}
+  .flow .node:nth-child(2){margin-top:26px}
+  .flow .node:nth-child(3){margin-top:6px}
+  .flow .node:nth-child(4){margin-top:26px}
+  .flow .node:nth-child(5){margin-top:6px}
+  .flow .node:nth-child(6){margin-top:26px}
+  .shot-rail{padding:14px 16px}
+  .rail{height:14px;border-radius:8px;background:linear-gradient(90deg,var(--cyan),var(--violet),var(--blue));box-shadow:0 0 16px rgba(77,243,255,.32);position:relative}
+  .rail i{position:absolute;top:-5px;width:10px;height:24px;border-radius:8px;background:rgba(232,247,255,.85);box-shadow:0 0 10px var(--cyan)}
+  .shots{display:grid;grid-auto-flow:column;grid-auto-columns:190px;gap:12px;overflow:auto;padding-top:12px}
+  .shot{padding:0 0 10px;border:1px solid rgba(97,219,255,.18);border-radius:12px;background:rgba(9,26,40,.68);overflow:hidden}
+  .thumb{height:84px;background:linear-gradient(135deg, rgba(77,243,255,.24), rgba(195,92,255,.16)), linear-gradient(180deg, #163043, #071018)}
+  .shot b,.shot small,.shot .badge{display:block;margin:8px 10px 0}
+  .shot small{color:var(--muted)}
+  .shot.active{border-color:var(--cyan);box-shadow:0 0 18px rgba(77,243,255,.22)}
+  .dialog-card{padding:14px;border:1px solid rgba(195,92,255,.3);border-radius:14px;background:rgba(9,26,40,.66)}
+  .dialog-card p{margin:0;color:#d8f5ff;line-height:1.55}
+  .footer-toast{position:fixed;right:24px;bottom:18px;padding:10px 14px;border-radius:14px;border:1px solid rgba(97,219,255,.24);background:rgba(7,18,30,.92);display:none}
+  @media (max-width: 1360px){.layout{grid-template-columns:1fr}.center{grid-template-rows:auto auto}.topbar{grid-template-columns:1fr}.right,.left{grid-template-rows:auto auto}.flow{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="kicker">AI Harness Film Factory</div>
+      <h1>Harness V2 对话中枢原型</h1>
+    </div>
+    <div class="mission">
+      <b>案例工程：退婚后，我继承万亿家产</b>
+      <span>阶段：分镜生产 / 当前焦点：shot_12 重跑审阅 / 用户只做关键决策</span>
+    </div>
+    <div class="actions">
+      <span class="pill">事件流在线</span>
+      <button class="btn">暂停</button>
+      <button class="btn">恢复</button>
+      <button class="btn primary">终审</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel left">
+      <div class="head"><h2>对话中枢</h2><span class="badge run">Director</span></div>
+      <div class="chat scroll">
+        <div class="chatbox">
+          <div class="bubble system">我会先把剧本、人物、场景、分镜的阶段拆开。你只需要说“改哪里”和“是否通过”。</div>
+          <div class="bubble user">把 shot_12 重新生成，保留人物一致性，强化前景压迫感。</div>
+          <div class="bubble system">已解析为：重跑分镜工位 -> 图像审核 -> 版本回写。</div>
+          <div class="dialog-card">
+            <p><b>内联决策卡</b><br/>建议：继续重跑 shot_12，打回到分镜生图 Agent。<br/>影响：人物 / 场景 / 道具锁定不变，仅强化构图和镜头关系。</p>
+          </div>
+          <div class="prompt">
+            <input value="聆听艺术家的安排，随时吩咐..." />
+            <button class="btn primary">发送</button>
+          </div>
+        </div>
+      </div>
+      <div class="nav">
+        <div class="nav-item active" data-scene="overview"><div><b>案例总览</b><div class="sub">小说 -> 成片 的完整链路</div></div><span class="badge pass">Ready</span></div>
+        <div class="nav-item" data-scene="script"><div><b>剧本工作台</b><div class="sub">剧本、对白、审核、版本</div></div><span class="badge review">Stage</span></div>
+        <div class="nav-item" data-scene="art"><div><b>人物 / 场景仓库</b><div class="sub">三视图、设定、道具</div></div><span class="badge run">Assets</span></div>
+        <div class="nav-item" data-scene="storyboard"><div><b>分镜工作台</b><div class="sub">镜头、提示词、版本链</div></div><span class="badge return">Reroute</span></div>
+        <div class="nav-item" data-scene="video"><div><b>视频生成台</b><div class="sub">片段、音轨、重试</div></div><span class="badge review">QA</span></div>
+      </div>
+    </aside>
+
+    <section class="panel center">
+      <div class="head">
+        <h2>阶段工作台</h2>
+        <div class="tabs">
+          <button class="tab active" data-tab="overview">总览</button>
+          <button class="tab" data-tab="script">剧本</button>
+          <button class="tab" data-tab="art">人物 / 场景</button>
+          <button class="tab" data-tab="storyboard">分镜</button>
+          <button class="tab" data-tab="video">视频</button>
+          <button class="tab" data-tab="loop">闭环</button>
+        </div>
+      </div>
+      <div class="stage scroll">
+        <div class="screen" id="overview">
+          <div class="grid3">
+            <div class="card"><h3>导演调度</h3><pre>输入：用户意图
+输出：任务图更新
+状态：正在拆解第 3 场修改请求</pre></div>
+            <div class="card"><h3>执行工位</h3><pre>剧本 -> 人物 -> 场景道具 -> 分镜 -> 视频
+Agent 自动进场，用户只看阶段结果</pre></div>
+            <div class="card"><h3>审核门禁</h3><pre>节点内审 / 阶段终审 / 人工确认
+不通过即回到对应工位</pre></div>
+          </div>
+          <div class="grid2" style="margin-top:12px">
+            <div class="card">
+              <h3>当前流程</h3>
+              <pre>1. 小说转剧本
+2. 人物设定 / 三视图
+3. 场景 / 道具 / 定妆
+4. 分镜脚本 / 分镜图
+5. 视频片段 / 音轨
+6. 合成 / 终审</pre>
+            </div>
+            <div class="card">
+              <h3>阶段产物示意</h3>
+              <pre>Script v03
+CHR-02-v04
+SCN-04-v01
+SB-012-v04
+VID-SB-012-v02
+RPT-FINAL-v01</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="screen" id="script" style="display:none">
+          <div class="grid2">
+            <div class="card"><h3>输入</h3><pre>小说原文 / 用户修改指令 / 上游审核建议</pre></div>
+            <div class="card"><h3>输出</h3><pre>场次结构 / 对白 / 动作 / 时长 / 版本号</pre></div>
+          </div>
+          <div class="grid2" style="margin-top:12px">
+            <div class="card"><h3>剧本内容</h3><pre>场 3：她把合同推回桌面。
+对白：我不会签。
+动作：抬眼、压住合同、直视对手。
+审核：已通过，待进入分镜。</pre></div>
+            <div class="card"><h3>版本链</h3><pre>v01 草稿
+v02 调整对白节奏
+v03 增强冲突与节奏
+当前：v03</pre></div>
+          </div>
+        </div>
+
+        <div class="screen" id="art" style="display:none">
+          <div class="grid3">
+            <div class="card"><h3>人物设定</h3><pre>三视图 / 服装 / 发型 / 情绪标签</pre></div>
+            <div class="card"><h3>场景道具</h3><pre>宴会厅 / 合同 / 黑金卡 / 光位</pre></div>
+            <div class="card"><h3>提示词仓库</h3><pre>正向词 / 负向词 / 模型建议 / 版本锁定</pre></div>
+          </div>
+          <div class="grid2" style="margin-top:12px">
+            <div class="card"><h3>人物产物</h3><pre>CHR-02-v04
+黑色礼服
+冷感表情
+一致性锁定：通过</pre></div>
+            <div class="card"><h3>场景产物</h3><pre>SCN-04-v01
+宴会厅 / 冷金属质感 / 强纵深
+审核：通过</pre></div>
+          </div>
+        </div>
+
+        <div class="screen" id="storyboard" style="display:none">
+          <div class="grid2">
+            <div class="card"><h3>分镜流程</h3><pre>分镜脚本 -> 提示词优化 -> 生图 -> 审核 -> 版本回写</pre></div>
+            <div class="card"><h3>镜头关系</h3><pre>镜头 09 / 10 / 11 通过
+镜头 12 打回
+镜头 13 / 14 等待审核</pre></div>
+          </div>
+          <div class="grid2" style="margin-top:12px">
+            <div class="card"><h3>shot_12 详情</h3><pre>景别：中近景
+镜头：65mm
+正向：强前景压迫感、合同置中、人物视线锁定
+负向：手部畸形、视线错误、构图偏平
+审核：未通过，需重跑</pre></div>
+            <div class="card"><h3>版本对比</h3><pre>v01 构图偏平
+v02 人物比例偏差
+v03 当前打回
+v04 预期重跑版本</pre></div>
+          </div>
+        </div>
+
+        <div class="screen" id="video" style="display:none">
+          <div class="grid2">
+            <div class="card"><h3>视频生成</h3><pre>输入：已审分镜图 + 动作提示词 + 角色锁定
+输出：单镜头片段 + 音轨 + 审核结果</pre></div>
+            <div class="card"><h3>片段状态</h3><pre>VID-SB-012-v02
+当前：待复核
+音画同步：待确认
+下一步：合成流程</pre></div>
+          </div>
+          <div class="grid2" style="margin-top:12px">
+            <div class="card"><h3>音画链路</h3><pre>配音 -> 配乐 -> 剪辑 -> 合成
+终审前每一步都保留版本</pre></div>
+            <div class="card"><h3>审核反馈</h3><pre>建议：收紧手部动作，降低 motion strength
+保留角色面部一致性
+重新进入视频工位</pre></div>
+          </div>
+        </div>
+
+        <div class="screen" id="loop" style="display:none">
+          <div class="grid3">
+            <div class="card"><h3>输入</h3><pre>用户指令 / 小说 / 修改意见</pre></div>
+            <div class="card"><h3>执行</h3><pre>Agent 自动分派到对应工位</pre></div>
+            <div class="card"><h3>回写</h3><pre>产物进入版本仓库和业务表</pre></div>
+          </div>
+          <div class="card" style="margin-top:12px">
+            <h3>闭环总览</h3>
+            <pre>用户输入 -> Director 调度 -> 执行工位 -> 审核门禁 -> 打回 / 通过 -> 版本仓库 -> 下一阶段
+
+这是 Harness 的核心竞争力，而不是一个单纯的生成面板。</pre>
+          </div>
+        </div>
+      </div>
+      <div class="shot-rail">
+        <div class="rail"><i style="left:18%"></i><i style="left:48%"></i><i style="left:76%"></i></div>
+        <div class="shots">
+          <div class="shot active"><div class="thumb"></div><b>shot_09</b><small>通过</small><span class="badge pass">PASS</span></div>
+          <div class="shot"><div class="thumb"></div><b>shot_10</b><small>通过</small><span class="badge pass">PASS</span></div>
+          <div class="shot"><div class="thumb"></div><b>shot_11</b><small>通过</small><span class="badge pass">PASS</span></div>
+          <div class="shot"><div class="thumb"></div><b>shot_12</b><small>打回</small><span class="badge return">RETURN</span></div>
+          <div class="shot"><div class="thumb"></div><b>shot_13</b><small>待审</small><span class="badge review">REVIEW</span></div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel right">
+      <div class="head"><h2>产物仓库 / 门禁</h2><span class="badge review">Monitor</span></div>
+      <div class="right-section">
+        <div class="metric">
+          <div class="m"><span>阶段</span><b>分镜</b></div>
+          <div class="m"><span>循环</span><b>03</b></div>
+          <div class="m"><span>通过</span><b>11</b></div>
+          <div class="m"><span>打回</span><b>02</b></div>
+        </div>
+      </div>
+      <div class="right-section">
+        <div class="artifact">
+          <div class="artifact-card pass"><span>Script v03</span><b>剧本</b><p>对白、动作、时长与版本链已写回。</p></div>
+          <div class="artifact-card pass"><span>CHR-02-v04</span><b>人物定妆图</b><p>三视图与一致性锁定已通过。</p></div>
+          <div class="artifact-card return"><span>SB-012-v03</span><b>分镜图</b><p>当前被打回，等待重跑。</p></div>
+        </div>
+      </div>
+      <div class="right-section">
+        <div class="card">
+          <h3>审核门禁</h3>
+          <pre>总监制：建议继续重跑 shot_12
+用户操作：通过 / 打回 / 重新生成 / 修改后再审</pre>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+<div class="footer-toast" id="toast">已切换场景</div>
+<script>
+  const screens = ["overview","script","art","storyboard","video","loop"];
+  const tabs = document.querySelectorAll("[data-tab]");
+  const navs = document.querySelectorAll("[data-scene]");
+  const toast = document.getElementById("toast");
+
+  function show(scene){
+    screens.forEach(id => document.getElementById(id).style.display = id === scene ? "block" : "none");
+    tabs.forEach(el => el.classList.toggle("active", el.dataset.tab === scene));
+    navs.forEach(el => el.classList.toggle("active", el.dataset.scene === scene));
+    toast.textContent = scene === "overview" ? "案例总览" : `已切换到 ${scene}`;
+    toast.style.display = "block";
+    clearTimeout(window.__t);
+    window.__t = setTimeout(()=>toast.style.display = "none", 1600);
+  }
+
+  tabs.forEach(el => el.addEventListener("click", () => show(el.dataset.tab)));
+  navs.forEach(el => el.addEventListener("click", () => show(el.dataset.scene)));
+  show("overview");
+</script>
+</body>
+</html>

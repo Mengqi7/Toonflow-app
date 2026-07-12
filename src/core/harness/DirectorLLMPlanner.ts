@@ -86,7 +86,7 @@ export class DirectorLLMPlanner {
   async planNextStep(state: PlannerState): Promise<DirectorDecision> {
     try {
       const userPrompt = this.buildPrompt(state);
-      const result = await Ai.Text("universalAi", false, 0.3).invoke({
+      const result = await Ai.Text("universalAi", false, 1).invoke({
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
@@ -146,7 +146,7 @@ export class DirectorLLMPlanner {
 - 角色不一致 → reroute 给 costume/makeup
 - 已重试 2 次仍失败 → ask_user`;
 
-      const result = await Ai.Text("universalAi", false, 0.3).invoke({
+      const result = await Ai.Text("universalAi", false, 1).invoke({
         messages: [
           { role: "system", content: "你是监制 Agent, 负责审核驳回决策。输出必须是 JSON。" },
           { role: "user", content: prompt },
@@ -187,7 +187,7 @@ export class DirectorLLMPlanner {
 - "跳过服装直接生图" → { action: "dispatch", nextTask: { agentRole: "dp" }, skipAgents: ["costume", "makeup"] }
 - "暂停" → { action: "ask_user", userPrompt: "已暂停, 需要继续吗?", userOptions: ["继续", "取消"] }`;
 
-      const result = await Ai.Text("universalAi", false, 0.3).invoke({
+      const result = await Ai.Text("universalAi", false, 1).invoke({
         messages: [
           { role: "system", content: "你是导演 Agent, 负责解析用户意图。输出必须是 JSON。" },
           { role: "user", content: prompt },

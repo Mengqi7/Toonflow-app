@@ -1,4 +1,4 @@
-// @db-hash e2fe88940f377b6e62dd1c4c2fb7f2ab
+// @db-hash 789b1e9ba608f934f15c09acab2aa6db
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -12,6 +12,23 @@ export interface memories {
   'role'?: string | null;
   'summarized'?: number | null;
   'type': string;
+}
+export interface o_action_run {
+  'contextSnapshot': string;
+  'createdAt': number;
+  'episodeId'?: number | null;
+  'error'?: string | null;
+  'id'?: string | null;
+  'idempotencyKey': string;
+  'instanceId': string;
+  'plan': string;
+  'projectId': number;
+  'result'?: string | null;
+  'reviewState'?: string | null;
+  'status': string;
+  'toolCalls': string;
+  'updatedAt': number;
+  'userInstruction': string;
 }
 export interface o_agentDeploy {
   'desc'?: string | null;
@@ -35,18 +52,40 @@ export interface o_agentWorkData {
   'projectId'?: number | null;
   'updateTime'?: number | null;
 }
+export interface o_artifact_link {
+  'actionRunId'?: string | null;
+  'createdAt': number;
+  'id'?: string | null;
+  'metadata'?: string | null;
+  'projectId': number;
+  'relation': string;
+  'sourceId': string;
+  'sourceType': string;
+  'targetId': string;
+  'targetType': string;
+}
 export interface o_artifact_version {
+  'actionRunId'?: string | null;
   'artifactKey': string;
   'artifactType': string;
   'content'?: string | null;
   'createdAt': number;
+  'createdBy'?: string | null;
+  'derivedFromVersion'?: number | null;
   'filePath'?: string | null;
   'id'?: number | null;
+  'inputReferences'?: string | null;
   'instanceId': string;
+  'model'?: string | null;
   'projectId': number;
+  'promptVersion'?: string | null;
+  'provider'?: string | null;
+  'reason'?: string | null;
   'reviewFeedback'?: string | null;
+  'reviewResult'?: string | null;
   'reviewScore'?: string | null;
   'source'?: string | null;
+  'sourceAgent'?: string | null;
   'version': number;
 }
 export interface o_artStyle {
@@ -59,6 +98,7 @@ export interface o_artStyle {
 export interface o_assets {
   'assetsId'?: number | null;
   'audioBindState'?: number | null;
+  'createdBy'?: string | null;
   'describe'?: string | null;
   'flowId'?: number | null;
   'id'?: number;
@@ -70,8 +110,10 @@ export interface o_assets {
   'promptState'?: string | null;
   'remark'?: string | null;
   'scriptId'?: number | null;
+  'source'?: string | null;
   'startTime'?: number | null;
   'type'?: string | null;
+  'updateTime'?: number | null;
 }
 export interface o_assets2Storyboard {
   'assetId'?: number;
@@ -80,6 +122,20 @@ export interface o_assets2Storyboard {
 export interface o_assetsRole2Audio {
   'assetsAudioId'?: number;
   'assetsRoleId'?: number;
+}
+export interface o_beat {
+  'createdBy'?: string | null;
+  'createTime': number;
+  'episodeId': number;
+  'id'?: number;
+  'orderIndex'?: number | null;
+  'projectId': number;
+  'scriptId'?: number | null;
+  'source'?: string | null;
+  'status'?: string | null;
+  'summary'?: string | null;
+  'title': string;
+  'updateTime': number;
 }
 export interface o_character_library {
   'accessories'?: string | null;
@@ -246,6 +302,25 @@ export interface o_review_report {
   'totalScore'?: number | null;
   'workflowInstanceId'?: string | null;
 }
+export interface o_scene {
+  'beatId'?: number | null;
+  'characterIds'?: string | null;
+  'createdBy'?: string | null;
+  'createTime': number;
+  'description'?: string | null;
+  'episodeId': number;
+  'id'?: number;
+  'locationId'?: number | null;
+  'orderIndex'?: number | null;
+  'projectId': number;
+  'propIds'?: string | null;
+  'scriptId'?: number | null;
+  'source'?: string | null;
+  'status'?: string | null;
+  'summary'?: string | null;
+  'title': string;
+  'updateTime': number;
+}
 export interface o_scene_library {
   'artDirection'?: string | null;
   'createTime'?: number | null;
@@ -259,12 +334,15 @@ export interface o_scene_library {
 }
 export interface o_script {
   'content'?: string | null;
+  'createdBy'?: string | null;
   'createTime'?: number | null;
   'errorReason'?: string | null;
   'extractState'?: number | null;
   'id'?: number;
   'name'?: string | null;
   'projectId'?: number | null;
+  'source'?: string | null;
+  'updateTime'?: number | null;
 }
 export interface o_scriptAssets {
   'assetId'?: number;
@@ -291,20 +369,25 @@ export interface o_skillList {
   'updateTime': number;
 }
 export interface o_storyboard {
+  'cameraMovement'?: string | null;
   'createTime'?: number | null;
   'duration'?: string | null;
   'filePath'?: string | null;
   'flowId'?: number | null;
   'id'?: number;
   'index'?: number | null;
+  'lockedRefs'?: string | null;
   'projectId'?: number | null;
   'prompt'?: string | null;
   'reason'?: string | null;
+  'sceneId'?: number | null;
   'scriptId'?: number | null;
+  'shotSize'?: string | null;
   'shouldGenerateImage'?: number | null;
   'state'?: string | null;
   'track'?: string | null;
   'trackId'?: number | null;
+  'updateTime'?: number | null;
   'videoDesc'?: string | null;
 }
 export interface o_style_library {
@@ -384,13 +467,16 @@ export interface o_workflow_template {
 
 export interface DB {
   "memories": memories;
+  "o_action_run": o_action_run;
   "o_agentDeploy": o_agentDeploy;
   "o_agentWorkData": o_agentWorkData;
+  "o_artifact_link": o_artifact_link;
   "o_artifact_version": o_artifact_version;
   "o_artStyle": o_artStyle;
   "o_assets": o_assets;
   "o_assets2Storyboard": o_assets2Storyboard;
   "o_assetsRole2Audio": o_assetsRole2Audio;
+  "o_beat": o_beat;
   "o_character_library": o_character_library;
   "o_comfyui_server": o_comfyui_server;
   "o_comfyui_workflow": o_comfyui_workflow;
@@ -408,6 +494,7 @@ export interface DB {
   "o_prop_library": o_prop_library;
   "o_review_preference": o_review_preference;
   "o_review_report": o_review_report;
+  "o_scene": o_scene;
   "o_scene_library": o_scene_library;
   "o_script": o_script;
   "o_scriptAssets": o_scriptAssets;

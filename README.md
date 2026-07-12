@@ -410,12 +410,14 @@ pm2 monit             # 监控面板
 
 #### 6. 部署前端网站
 
-如需单独部署或定制前端界面，请参考前端仓库：
+如需单独部署或定制前端界面，请使用本仓库中的 `frontend/` 子项目：
 
-- **GitHub**：[Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**：[Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+```bash
+yarn --cwd frontend install --frozen-lockfile
+yarn web:dev
+```
 
-> 💡 **说明**：本仓库已内置编译好的前端资源，普通用户无需单独部署前端。前端仓库仅供需要二次开发的开发者使用。
+> 💡 **说明**：`yarn web:build` 会自动构建 `frontend/` 并同步产物到 `data/web`，供 Electron 打包使用。
 
 ---
 
@@ -546,12 +548,15 @@ pm2 monit             # 监控面板
 
 ## 前端开发
 
-如需修改前端界面，请前往前端仓库进行开发：
+前端源码位于 `frontend/`，可直接从根目录运行：
 
-- **GitHub**：[Toonflow-web](https://github.com/HBAI-Ltd/Toonflow-web)
-- **Gitee**：[Toonflow-web](https://gitee.com/HBAI-Ltd/Toonflow-web)
+```bash
+yarn web:dev
+yarn web:type-check
+yarn web:build
+```
 
-前端构建后，将 `dist` 目录内容复制到本项目的 `data/web` 目录即可集成。
+`yarn web:build` 会自动将 `frontend/dist` 同步到 `data/web`，无需手动复制。
 
 ## 项目结构
 
@@ -616,10 +621,10 @@ pm2 monit             # 监控面板
 
 | 仓库             | 说明                               | GitHub                                             | Gitee                                            |
 | ---------------- | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------ |
-| **Toonflow-app** | 完整客户端（本仓库，推荐普通用户） | [GitHub](https://github.com/HBAI-Ltd/Toonflow-app) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-app) |
-| **Toonflow-web** | 前端源代码（适合前端开发者）       | [GitHub](https://github.com/HBAI-Ltd/Toonflow-web) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-web) |
+| **Toonflow-app** | 完整客户端与前端源码（本仓库） | [GitHub](https://github.com/HBAI-Ltd/Toonflow-app) | [Gitee](https://gitee.com/HBAI-Ltd/Toonflow-app) |
+| **frontend/** | Vue 前端子项目，随本仓库维护 | - | - |
 
-> 💡 **提示**：如果您只是想使用 Toonflow，直接下载本仓库的客户端即可。前端仓库仅供需要二次开发或定制前端界面的开发者使用。
+> 💡 **提示**：如果您只是想使用 Toonflow，直接下载本仓库的客户端即可。需要二次开发或定制前端时，请进入 `frontend/`。
 
 ---
 
