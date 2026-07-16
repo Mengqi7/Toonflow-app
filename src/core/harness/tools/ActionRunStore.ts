@@ -37,6 +37,15 @@ export class ActionRunStore {
     return row ? this.deserialize(row) : undefined;
   }
 
+  async listByProject(projectId: number, limit = 50): Promise<ActionRun[]> {
+    await this.ensureTable();
+    const rows = await db("o_action_run")
+      .where({ projectId })
+      .orderBy("createdAt", "desc")
+      .limit(Math.max(1, Math.min(200, limit)));
+    return rows.reverse().map(row => this.deserialize(row));
+  }
+
   async findByIdempotencyKey(key: string): Promise<ActionRun | undefined> {
     await this.ensureTable();
     const row = await db("o_action_run").where("idempotencyKey", key).first();

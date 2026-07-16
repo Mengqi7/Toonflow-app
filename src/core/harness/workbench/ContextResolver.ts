@@ -6,6 +6,7 @@ import type {
   ContextEntityRef,
   ContextSourceTrace,
   ProjectContext,
+  ProductionState,
   WorkbenchContextInput,
 } from "./contracts";
 
@@ -131,6 +132,12 @@ export class ContextResolver {
 
   private async loadPendingReviews(projectId: number): Promise<Array<Record<string, unknown>>> {
     if (!(await db.schema.hasTable("o_review_report"))) return [];
+    if (await db.schema.hasColumn("o_review_report", "projectId")) {
+      let direct = db("o_review_report").where({ projectId });
+      if (await db.schema.hasColumn("o_review_report", "decision")) direct = direct.whereNotIn("decision", ["pass", "approved", "approve", "final_approved", "rerouted"]);
+      const directTime = await db.schema.hasColumn("o_review_report", "createTime") ? "createTime" : "createdAt";
+      return direct.orderBy(directTime, "desc").limit(20);
+    }
     const instanceColumn = await db.schema.hasColumn("o_review_report", "instanceId") ? "instanceId" : "workflowInstanceId";
     const timeColumn = await db.schema.hasColumn("o_review_report", "createdAt") ? "createdAt" : "createTime";
     let query = db("o_review_report")
@@ -170,20 +177,70 @@ export class ContextResolver {
     const hasDirectorPlan = productionRows.some((row: any) => Boolean(this.parseJson<any>(row.data, {}).directorPlan?.trim?.()));
     const shotCount = await db.schema.hasTable("o_storyboard") ? Number((await db("o_storyboard").where({ projectId }).count({ count: "*" }).first())?.count || 0) : 0;
     const videoCount = await db.schema.hasTable("o_video") ? Number((await db("o_video").where({ projectId }).count({ count: "*" }).first())?.count || 0) : 0;
+    const latestScript = scriptCount ? await db("o_script").where({ projectId }).orderBy("id", "desc").first() : undefined;
+    const latestAsset = assetCount ? await db("o_assets").where({ projectId }).orderBy("id", "desc").first() : undefined;
+    const latestShot = shotCount ? await db("o_storyboard").where({ projectId }).orderBy("id", "desc").first() : undefined;
+    const latestVideo = videoCount ? await db("o_video").where({ projectId }).orderBy("id", "desc").first() : undefined;
     const hasStorySkeleton = Boolean(workData.storySkeleton?.trim?.());
     const hasAdaptationStrategy = Boolean(workData.adaptationStrategy?.trim?.());
-    const nextStage = !hasStorySkeleton || !hasAdaptationStrategy ? "development"
+    let lastReview: any;
+    if (await db.schema.hasTable("o_review_report") && await db.schema.hasColumn("o_review_report", "projectId")) {
+      const reviewTime = await db.schema.hasColumn("o_review_report", "createTime") ? "createTime" : "createdAt";
+      lastReview = await db("o_review_report").where({ projectId }).orderBy(reviewTime, "desc").first();
+    }
+    const reviewStage = this.reviewTargetStage(lastReview?.targetType, lastReview?.targetId);
+    const actionRows = await db.schema.hasTable("o_action_run") ? await db("o_action_run").where({ projectId }).orderBy("updatedAt", "desc").limit(20) : [];
+    const latestStageResult = actionRows.map((row: any) => this.parseJson<any>(row.result, {})).find((result: any) => result.stage);
+    const actionBlocked = Boolean(latestStageResult?.stage && (latestStageResult?.qualityLoop?.passed === false || latestStageResult?.quality?.passed === false || (latestStageResult?.reviewRequired && latestStageResult?.reviews?.some?.((item: any) => item.error))));
+    const reviewBlocked = lastReview?.decision === "rejected";
+    const qualityBlockedStage = (actionBlocked ? latestStageResult?.quality?.blockedStage || latestStageResult.stage : reviewBlocked ? reviewStage : undefined) as any;
+    const qualityBlocked = Boolean(qualityBlockedStage);
+    const nextStage = qualityBlockedStage || (!hasStorySkeleton || !hasAdaptationStrategy ? "development"
       : !scriptCount ? "screenplay"
         : !assetCount ? "assets"
           : !hasDirectorPlan ? "director_plan"
             : !shotCount ? "storyboard"
-              : videoCount < shotCount ? "video" : "complete";
-    return { hasNovel, hasStorySkeleton, hasAdaptationStrategy, scriptCount, assetCount, hasDirectorPlan, shotCount, videoCount, nextStage } as const;
+              : videoCount < shotCount ? "video" : "complete");
+    return {
+      hasNovel,
+      hasStorySkeleton,
+      hasAdaptationStrategy,
+      scriptCount,
+      assetCount,
+      hasDirectorPlan,
+      shotCount,
+      videoCount,
+      latestScriptId: latestScript?.id == null ? undefined : String(latestScript.id),
+      latestScriptName: latestScript?.name || undefined,
+      latestAssetId: latestAsset?.id == null ? undefined : String(latestAsset.id),
+      latestShotId: latestShot?.id == null ? undefined : String(latestShot.id),
+      latestVideoId: latestVideo?.id == null ? undefined : String(latestVideo.id),
+      qualityBlocked,
+      qualityBlockedStage,
+      lastReviewDecision: lastReview?.decision || undefined,
+      nextStage,
+    } as const;
   }
 
   private parseJson<T>(value: string | null, fallback: T): T {
     if (!value) return fallback;
     try { return JSON.parse(value) as T; } catch { return fallback; }
+  }
+
+  private reviewTargetStage(type?: string, id?: string): ProductionState["qualityBlockedStage"] {
+    if (type === "script") return "screenplay";
+    if (["character", "prop", "location"].includes(String(type))) return "assets";
+    if (type === "shot") return "storyboard";
+    if (type === "video") return "video";
+    if (type !== "stage") return undefined;
+    const field = String(id || "").split(":")[0];
+    if (field === "storySkeleton") return "skeleton";
+    if (field === "adaptationStrategy") return "adaptation";
+    if (field === "directorPlan") return "director_plan";
+    if (field === "assets") return "assets";
+    if (field === "storyboard") return "storyboard";
+    if (field === "video") return "video";
+    return undefined;
   }
 
   private uniqueRefs(refs: ContextEntityRef[]): ContextEntityRef[] {

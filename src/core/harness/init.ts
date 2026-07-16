@@ -16,6 +16,7 @@ import fg from "fast-glob";
 import { TemplateLibrary } from "../../../toonflow-comfyui-agent/src/TemplateLibrary";
 import type { Template } from "../../../toonflow-comfyui-agent/src/TemplateLibrary";
 import { ReviewPipeline } from "../../review/ReviewPipeline";
+import Ai from "@/utils/ai";
 import { HarnessEventBus, harnessEventBus } from "./HarnessEventBus";
 import { Hooks } from "./Hooks";
 import { initDirectorOrchestrator } from "./DirectorOrchestrator";
@@ -338,6 +339,12 @@ export async function initHarness(): Promise<void> {
   const reviewPipeline = new ReviewPipeline({
     rulesEngine: harness.rulesEngine,
     memoryBus: harness.memoryBus,
+    aiEvaluate: async prompt => (await Ai.Text("universalAi", false, 0).invoke({
+      messages: [
+        { role: "system", content: "你是影视工业质量监制。严格依据审核标准评分，只返回要求的 JSON。" },
+        { role: "user", content: prompt },
+      ],
+    })).text,
   });
   // @ts-ignore - 注入私有静态字段
   harness.workflowRunner.constructor.initReviewPipeline(reviewPipeline);

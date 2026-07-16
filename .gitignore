@@ -42,6 +42,9 @@ uploads/*
 db.sqlite
 db.sqlite-shm
 db.sqlite-wal
+*.sqlite-shm
+*.sqlite-wal
+data/harness-dev.*.log
 
 web/*
 

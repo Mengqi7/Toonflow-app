@@ -51,14 +51,28 @@ router.post("/:instanceId/instructions", async (req, res) => {
       message: z.string().min(1),
       context: contextSchema,
       confirmed: z.boolean().optional(),
+      requestId: z.string().min(8).max(200).optional(),
     }).parse(req.body);
     const result = await directorOrchestrator.handleWorkbenchInstruction(
       req.params.instanceId,
       body.message,
       body.context,
       body.confirmed,
+      body.requestId,
     );
     res.json({ code: 200, data: result });
+  } catch (error) {
+    res.status(400).json({ code: 400, message: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.get("/actions", async (req, res) => {
+  try {
+    const query = z.object({
+      projectId: z.coerce.number().int(),
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }).parse(req.query);
+    res.json({ code: 200, data: await actionRunStore.listByProject(query.projectId, query.limit) });
   } catch (error) {
     res.status(400).json({ code: 400, message: error instanceof Error ? error.message : String(error) });
   }

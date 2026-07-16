@@ -92,12 +92,14 @@ export class ToolRuntime {
         projectContext: request.context,
         signal: controller.signal,
         reportProgress: async (percent, message) => {
+          toolCall.progress = { percent: Math.max(0, Math.min(100, Math.round(percent))), message, updatedAt: Date.now() };
+          run = await this.store.update(run.id, { status: "running", toolCalls: run.toolCalls });
           await harnessEventBus.emitWorkbenchEvent({
             kind: "tool.progress",
             actionRunId: run.id,
             instanceId: run.instanceId,
             projectId: run.projectId,
-            payload: { callId: toolCall.id, toolName: request.toolName, percent, message },
+            payload: { callId: toolCall.id, toolName: request.toolName, percent: toolCall.progress.percent, message },
           });
         },
       });
@@ -105,7 +107,7 @@ export class ToolRuntime {
       toolCall.status = "completed";
       toolCall.output = validatedOutput;
       toolCall.completedAt = Date.now();
-      run = await this.store.update(run.id, { status: "completed", toolCalls: run.toolCalls, result: validatedOutput, error: null });
+      run = await this.store.update(run.id, { status: "completed", toolCalls: run.toolCalls, result: validatedOutput, error: null, reviewState: this.resolveReviewState(validatedOutput) });
 
       await harnessEventBus.emitWorkbenchEvent({
         kind: "tool.completed",
@@ -191,6 +193,14 @@ export class ToolRuntime {
     return createHash("sha256")
       .update(JSON.stringify({ instanceId: request.instanceId, toolName: request.toolName, input }))
       .digest("hex");
+  }
+
+  private resolveReviewState(output: unknown): ActionRun["reviewState"] {
+    const result = output as any;
+    if (typeof result?.score?.passed === "boolean") return result.score.passed ? "approved" : "rejected";
+    if (typeof result?.quality?.passed === "boolean") return result.quality.passed ? "approved" : "rejected";
+    if (typeof result?.qualityLoop?.passed === "boolean") return result.qualityLoop.passed ? "approved" : "rejected";
+    return "not_required";
   }
 
   private toFailure(error: unknown, cancelled: boolean): ToolFailure {

@@ -318,10 +318,11 @@ export class DirectorOrchestrator {
     message: string,
     contextInput: WorkbenchContextInput,
     confirmed = false,
+    requestId?: string,
   ): Promise<{ reply: string; actionRun: ActionRun }> {
     this.addMessage(instanceId, "user", message);
     const context = await workbenchContextResolver.resolve(contextInput);
-    const actionRun = await conversationalDirector.executeInstruction(instanceId, message, context, confirmed);
+    const actionRun = await conversationalDirector.executeInstruction(instanceId, message, context, confirmed, requestId);
     const resultReply = (actionRun.result as any)?.reply || (actionRun.result as any)?.summary;
     const reply = actionRun.status === "completed"
       ? resultReply || `已完成：${actionRun.plan.summary}`

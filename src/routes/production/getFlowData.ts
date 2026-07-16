@@ -6,6 +6,26 @@ import { validateFields } from "@/middleware/middleware";
 const router = express.Router();
 import { FlowData } from "@/agents/productionAgent/tools";
 
+function storyboardTableMarkdown(rows: any[]): string {
+  if (!rows.length) return "";
+  const cell = (value: unknown) => String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+  return [
+    "| 镜号 | 景别 | 运镜 | 时长 | 画面与动作 | 生成提示词 |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...rows
+      .slice()
+      .sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0))
+      .map((row, index) => `| ${[
+        `S${String(index + 1).padStart(2, "0")}`,
+        row.shotSize || "-",
+        row.cameraMovement || "-",
+        `${Number(row.duration || 0)}s`,
+        row.videoDesc || "",
+        row.prompt || "",
+      ].map(cell).join(" | ")} |`),
+  ].join("\n");
+}
+
 export default router.post(
   "/",
   validateFields({
@@ -154,6 +174,9 @@ export default router.post(
           }))
           .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
         flowData.script = scriptData?.content ?? "";
+        flowData.scriptPlan ||= flowData.directorPlan || "";
+        flowData.storyboardTable ||= storyboardTableMarkdown(storyboardData);
+        flowData.workbench ||= { videoList: [] };
         res.status(200).send(success(flowData));
       } catch (err) {
         res.status(400).send(error());

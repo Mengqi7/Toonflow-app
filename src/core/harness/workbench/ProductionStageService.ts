@@ -2,6 +2,7 @@ import { v4 as uuid } from "uuid";
 import { db } from "@/utils/db";
 import { entityId, numericEntityId } from "../domain/ids";
 import { filmDomainService } from "../domain/FilmDomainService";
+import { reviewDomainService, type ReviewRequest } from "../domain/ReviewDomainService";
 import type { ProductionDomainService } from "../domain/ProductionDomainService";
 import type { ActionRun, ContextEntityRef, ProjectContext, UiPatch, WorkbenchDomain } from "./contracts";
 import { LegacyAgentBridge, type AssetDraft, type DelegationEvidence, type ScreenplayDraft, type StoryboardDraft } from "./LegacyAgentBridge";
@@ -21,11 +22,29 @@ export interface ProductionStageInput {
 interface StageResult {
   stage: ProductionStage;
   summary: string;
-  delegatedSteps: Array<{ role: string; tool: string; status: "completed" | "pending"; detail: string }>;
+  delegatedSteps: Array<{ role: string; tool: string; status: "completed" | "pending" | "failed"; detail: string }>;
   artifactIds: string[];
   reviewRequired: boolean;
   uiPatch: UiPatch;
   [key: string]: unknown;
+}
+
+interface StageReviewTarget extends ReviewRequest {
+  label: string;
+  targetAgent: string;
+}
+
+interface StageReviewEvidence {
+  reviewId?: string;
+  attemptNumber: number;
+  artifactType: string;
+  artifactId: string;
+  label: string;
+  reviewer?: string;
+  criteriaAgent?: string;
+  targetAgent: string;
+  score?: { overall?: number; passed?: boolean; feedback?: string };
+  error?: string;
 }
 
 /**
@@ -38,7 +57,55 @@ export class ProductionStageService {
   constructor(private readonly production: ProductionDomainService) {}
 
   async run(actionRun: ActionRun, input: ProductionStageInput, context: ProjectContext, reportProgress: (percent: number, message: string) => Promise<void>): Promise<StageResult> {
+    const resolvedInput = await this.resolveStageInput(actionRun, input);
+    const activeRun = resolvedInput.scriptId ? this.withEpisode(actionRun, resolvedInput.scriptId) : actionRun;
     const mode = input.mode || "ai";
+    const result = await this.executeStage(activeRun, resolvedInput, mode, context, reportProgress);
+    if (resolvedInput.stage === "pipeline") return result;
+    const reviewed = await this.attachReview(activeRun, result, resolvedInput.scriptId, 1);
+    const failed = this.failedReviews(reviewed);
+    const retryableStages: ProductionStage[] = ["skeleton", "adaptation", "development", "screenplay", "assets", "director_plan", "storyboard"];
+    if (!failed.length || !retryableStages.includes(resolvedInput.stage)) return reviewed;
+
+    const feedback = failed.map(item => `${item.label}: ${item.score?.feedback || `评分 ${this.formatScore(item.score?.overall)}`}`).join("\n");
+    await reportProgress(90, `质量监制未通过，Director 正在把 ${failed.length} 项问题退回原 Agent`);
+    for (const item of failed) {
+      if (!item.reviewId) continue;
+      await reviewDomainService.reroute(activeRun, { reviewId: item.reviewId, targetAgent: item.targetAgent, instruction: feedback }).catch(() => undefined);
+    }
+    const firstData = result as StageResult & { scriptId?: string };
+    const retryInput: ProductionStageInput = {
+      ...resolvedInput,
+      scriptId: resolvedInput.scriptId || firstData.scriptId,
+      instruction: `${resolvedInput.instruction || actionRun.userInstruction}\n\n质量监制返工要求：\n${feedback}\n请针对问题改写，不要降低原有完整度。${resolvedInput.stage === "assets" ? "\n保持现有资产名称、类型和数量稳定，只补充或修正设定细节。" : ""}`,
+    };
+    const retryRun = retryInput.scriptId ? this.withEpisode(activeRun, retryInput.scriptId) : activeRun;
+    if (resolvedInput.stage === "storyboard") {
+      await this.discardStoryboardDraft(retryRun, Array.isArray(firstData.shotIds) ? firstData.shotIds : []);
+    }
+    const regenerated = await this.executeStage(retryRun, retryInput, mode, context, (percent, message) => reportProgress(90 + Math.round(percent * 0.09), `返工：${message}`));
+    const finalResult = await this.attachReview(retryRun, regenerated, retryInput.scriptId, 2);
+    const finalFailed = this.failedReviews(finalResult);
+    return {
+      ...finalResult,
+      summary: finalFailed.length ? `${finalResult.summary} 自动返工后仍有 ${finalFailed.length} 项未通过。` : `${finalResult.summary} 已根据审核意见自动返工并复审通过。`,
+      delegatedSteps: [
+        ...reviewed.delegatedSteps,
+        { role: "AI Director", tool: "review.reroute", status: "completed", detail: `将 ${failed.length} 项审核问题转为结构化返工指令并重新调度原 Agent` },
+        ...finalResult.delegatedSteps,
+      ],
+      qualityLoop: {
+        attempts: 2,
+        initialReviews: (reviewed as any).reviews || [],
+        finalReviews: (finalResult as any).reviews || [],
+        passed: finalFailed.length === 0,
+      },
+      reviewRequired: finalFailed.length > 0 || Boolean(((finalResult as any).reviews || []).some((item: StageReviewEvidence) => item.error)),
+      nextAction: finalFailed.length ? "查看复审问题并人工决定继续返工或修改。" : finalResult.nextAction,
+    };
+  }
+
+  private async executeStage(actionRun: ActionRun, input: ProductionStageInput, mode: ProductionStageMode, context: ProjectContext, reportProgress: (percent: number, message: string) => Promise<void>): Promise<StageResult> {
     if (input.stage === "screenplay") return this.screenplay(actionRun, input, mode, reportProgress);
     if (input.stage === "skeleton") return this.skeleton(actionRun, input, mode, reportProgress);
     if (input.stage === "adaptation") return this.adaptation(actionRun, input, mode, reportProgress);
@@ -47,18 +114,29 @@ export class ProductionStageService {
     if (input.stage === "director_plan") return this.directorPlan(actionRun, input, mode, reportProgress);
     if (input.stage === "storyboard") return this.storyboard(actionRun, input, mode, reportProgress);
     if (input.stage === "video") return this.video(actionRun, input, context, reportProgress);
-    return this.pipeline(actionRun, input, mode, reportProgress);
+    return this.pipeline(actionRun, input, mode, context, reportProgress);
   }
 
-  private async pipeline(actionRun: ActionRun, input: ProductionStageInput, mode: ProductionStageMode, reportProgress: (percent: number, message: string) => Promise<void>): Promise<StageResult> {
+  private async pipeline(actionRun: ActionRun, input: ProductionStageInput, mode: ProductionStageMode, context: ProjectContext, reportProgress: (percent: number, message: string) => Promise<void>): Promise<StageResult> {
     await reportProgress(3, "Director is assembling story, screenplay, art and storyboard stages");
-    const development = await this.development(actionRun, { ...input, stage: "development" }, mode, progress => reportProgress(Math.round(progress * 0.16), "Story development: " + progress));
-    const screenplay = await this.screenplay(actionRun, { ...input, stage: "screenplay" }, mode, progress => reportProgress(16 + Math.round(progress * 0.20), "Screenplay stage: " + progress));
+    const stages: Record<string, StageResult> = {};
+    const development = await this.run(actionRun, { ...input, stage: "development", mode }, context, (percent, message) => reportProgress(Math.round(percent * 0.16), `Story development: ${message}`));
+    stages.development = development;
+    if (this.isQualityBlocked(development)) return this.blockedPipelineResult(actionRun, stages, "development", development);
+    const screenplay = await this.run(actionRun, { ...input, stage: "screenplay", mode }, context, (percent, message) => reportProgress(16 + Math.round(percent * 0.20), `Screenplay stage: ${message}`));
+    stages.screenplay = screenplay;
+    if (this.isQualityBlocked(screenplay)) return this.blockedPipelineResult(actionRun, stages, "screenplay", screenplay);
     const scriptId = String(screenplay.scriptId);
     const scopedRun = this.withEpisode(actionRun, scriptId);
-    const assets = await this.assets(scopedRun, { ...input, stage: "assets", scriptId }, mode, progress => reportProgress(36 + Math.round(progress * 0.20), "Asset stage: " + progress));
-    const directorPlan = await this.directorPlan(scopedRun, { ...input, stage: "director_plan", scriptId }, mode, progress => reportProgress(56 + Math.round(progress * 0.16), "Director plan: " + progress));
-    const storyboard = await this.storyboard(scopedRun, { ...input, stage: "storyboard", scriptId }, mode, progress => reportProgress(72 + Math.round(progress * 0.27), "Storyboard stage: " + progress));
+    const assets = await this.run(scopedRun, { ...input, stage: "assets", scriptId, mode }, context, (percent, message) => reportProgress(36 + Math.round(percent * 0.20), `Asset stage: ${message}`));
+    stages.assets = assets;
+    if (this.isQualityBlocked(assets)) return this.blockedPipelineResult(actionRun, stages, "assets", assets);
+    const directorPlan = await this.run(scopedRun, { ...input, stage: "director_plan", scriptId, mode }, context, (percent, message) => reportProgress(56 + Math.round(percent * 0.16), `Director plan: ${message}`));
+    stages.directorPlan = directorPlan;
+    if (this.isQualityBlocked(directorPlan)) return this.blockedPipelineResult(actionRun, stages, "director_plan", directorPlan);
+    const storyboard = await this.run(scopedRun, { ...input, stage: "storyboard", scriptId, mode }, context, (percent, message) => reportProgress(72 + Math.round(percent * 0.27), `Storyboard stage: ${message}`));
+    stages.storyboard = storyboard;
+    if (this.isQualityBlocked(storyboard)) return this.blockedPipelineResult(actionRun, stages, "storyboard", storyboard);
     await reportProgress(100, "Pre-production is ready for media generation review");
     return {
       stage: "pipeline",
@@ -72,7 +150,9 @@ export class ProductionStageService {
         { role: "Video Agent", tool: "video.generate_clip", status: "pending", detail: "Requires explicit confirmation before provider dispatch" },
       ],
       artifactIds: [...development.artifactIds, ...screenplay.artifactIds, ...assets.artifactIds, ...directorPlan.artifactIds, ...storyboard.artifactIds],
-      reviewRequired: true,
+      reviewRequired: false,
+      quality: { passed: true, completedStages: Object.keys(stages) },
+      reviews: Object.values(stages).flatMap(stage => this.finalReviews(stage)),
       uiPatch: storyboard.uiPatch,
       development,
       screenplay,
@@ -157,6 +237,7 @@ export class ProductionStageService {
       reviewRequired: true,
       uiPatch: mutation.uiPatch,
       scriptId,
+      delegation: source.delegation,
       entity: mutation.entity,
       version: mutation.version,
       changedFields: mutation.changedFields,
@@ -174,7 +255,10 @@ export class ProductionStageService {
     const draft = mode === "draft"
       ? { content: `# 导演规划\n\n围绕《${script.name}》建立场次、镜头节奏和连续性基线。`, delegation: this.draftDelegation("director_plan") }
       : await this.legacy.createDirectorPlan({ script: script.content || "", assets: assets.map(item => item.name), instruction: input.instruction || actionRun.userInstruction });
-    await this.updateProductionWorkData(projectId, scriptId, { directorPlan: draft.content });
+    await this.updateProductionWorkData(projectId, scriptId, {
+      directorPlan: draft.content,
+      scriptPlan: draft.content,
+    });
     await reportProgress(100, "导演规划已保存，可进入分镜阶段");
     return this.textStageResult(actionRun, "director_plan", "导演规划已生成。", draft.content, draft.delegation, "directorPlan", "storyboard");
   }
@@ -186,9 +270,22 @@ export class ProductionStageService {
     if (!scriptId) throw new Error("Select or create a screenplay before generating production assets.");
     const script = await db("o_script").where({ id: Number(scriptId), projectId }).first();
     if (!script) throw new Error(`Script not found: ${scriptId}`);
+    const existingAssets = await db("o_assets")
+      .where({ projectId, scriptId: Number(scriptId) })
+      .whereNull("assetsId")
+      .select("name", "type", "describe as description", "prompt");
+    const existingAssetSet = existingAssets.length ? {
+      characters: existingAssets.filter(item => item.type === "role").map(({ name, description, prompt }) => ({ name, description, prompt })),
+      props: existingAssets.filter(item => item.type === "tool").map(({ name, description, prompt }) => ({ name, description, prompt })),
+      locations: existingAssets.filter(item => item.type === "scene").map(({ name, description, prompt }) => ({ name, description, prompt })),
+    } : undefined;
     const draft = mode === "draft"
       ? this.makeDraftAssets(script.name, script.content || "")
-      : await this.legacy.deriveAssets({ script: script.content || "", instruction: input.instruction || actionRun.userInstruction });
+      : await this.legacy.deriveAssets({
+        script: script.content || "",
+        instruction: input.instruction || actionRun.userInstruction,
+        existingAssets: existingAssetSet,
+      });
     await reportProgress(50, "Writing character, prop and location records");
     const created = await this.persistAssets(this.withEpisode(actionRun, scriptId), scriptId, draft);
     await reportProgress(100, "Production assets are linked to the screenplay");
@@ -228,6 +325,9 @@ export class ProductionStageService {
       shots: draft.shots.map(shot => ({ ...shot, assetIds: assets.map(asset => entityId("artifact", asset.id)) })),
     });
     const shotIds = ((result.shots || []) as Array<{ id: string }>).map(shot => String(shot.id));
+    await this.updateProductionWorkData(projectId, scriptId, {
+      storyboardTable: this.storyboardTableMarkdown((result.shots || []) as StoryboardDraft["shots"]),
+    });
     await reportProgress(100, "Storyboard plan is saved and ready for image/video review");
     return {
       stage: "storyboard",
@@ -331,6 +431,120 @@ export class ProductionStageService {
     return raw ? String(raw).split(":").pop() : undefined;
   }
 
+  private async resolveStageInput(actionRun: ActionRun, input: ProductionStageInput): Promise<ProductionStageInput> {
+    if (input.scriptId || actionRun.episodeId || !["assets", "director_plan", "storyboard", "video"].includes(input.stage)) return input;
+    const projectId = numericEntityId(actionRun.projectId, "project");
+    const latest = await db("o_script")
+      .where({ projectId })
+      .orderByRaw("COALESCE(updateTime, createTime, 0) DESC")
+      .orderBy("id", "desc")
+      .first();
+    return latest?.id ? { ...input, scriptId: String(latest.id) } : input;
+  }
+
+  private async discardStoryboardDraft(actionRun: ActionRun, shotIds: string[]): Promise<void> {
+    const projectId = numericEntityId(actionRun.projectId, "project");
+    const ids = shotIds.map(id => Number(String(id).split(":").pop())).filter(Number.isFinite);
+    if (!ids.length) return;
+    const rows = await db("o_storyboard").where({ projectId }).whereIn("id", ids).select("id", "trackId", "filePath");
+    if (rows.some(row => Boolean(row.filePath))) throw new Error("已生成图片的分镜不能自动替换，请人工确认后重做");
+    const persistedIds = rows.map(row => Number(row.id));
+    const trackIds = rows.map(row => Number(row.trackId)).filter(Number.isFinite);
+    if (!persistedIds.length) return;
+    await db("o_assets2Storyboard").whereIn("storyboardId", persistedIds).delete();
+    if (await db.schema.hasTable("o_artifact_link")) {
+      await db("o_artifact_link").where({ projectId, targetType: "shot" }).whereIn("targetId", persistedIds.map(String)).delete();
+    }
+    await db("o_storyboard").where({ projectId }).whereIn("id", persistedIds).delete();
+    if (trackIds.length) await db("o_videoTrack").where({ projectId }).whereIn("id", trackIds).delete();
+  }
+
+  private isQualityBlocked(result: StageResult): boolean {
+    const data = result as any;
+    return data.qualityLoop?.passed === false || data.quality?.passed === false || result.reviewRequired === true;
+  }
+
+  private finalReviews(result: StageResult): StageReviewEvidence[] {
+    const data = result as any;
+    if (Array.isArray(data.qualityLoop?.finalReviews)) return data.qualityLoop.finalReviews;
+    return Array.isArray(data.reviews) ? data.reviews : [];
+  }
+
+  private blockedPipelineResult(actionRun: ActionRun, stages: Record<string, StageResult>, blockedStage: ProductionStage, failed: StageResult): StageResult {
+    const completed = Object.values(stages);
+    return {
+      stage: "pipeline",
+      summary: `完整流程已停在 ${blockedStage}：自动返工后仍未达到质量门槛。`,
+      delegatedSteps: completed.flatMap(stage => stage.delegatedSteps),
+      artifactIds: completed.flatMap(stage => stage.artifactIds),
+      reviewRequired: true,
+      quality: { passed: false, blockedStage, completedStages: Object.keys(stages) },
+      reviews: this.finalReviews(failed),
+      uiPatch: failed.uiPatch || this.patch(actionRun, "script", { type: "project", id: actionRun.projectId, label: blockedStage } as ContextEntityRef, "refresh", { blockedStage }),
+      nextAction: `查看 ${blockedStage} 的复审问题，修改后输入“继续”重试该阶段。`,
+      ...stages,
+    };
+  }
+
+  private async attachReview(actionRun: ActionRun, result: StageResult, resolvedScriptId?: string, attemptNumber = 1): Promise<StageResult> {
+    const targets = this.reviewTargets(result, resolvedScriptId);
+    if (!targets.length) return result;
+    const reviews: StageReviewEvidence[] = [];
+    for (const target of targets) {
+      try {
+        const review = await reviewDomainService.request(actionRun, { ...target, attemptNumber });
+        reviews.push({ reviewId: review.reviewId, attemptNumber, artifactType: target.artifactType, artifactId: target.artifactId, label: target.label, targetAgent: target.targetAgent, reviewer: review.reviewer, criteriaAgent: review.criteriaAgent, score: review.score });
+      } catch (error) {
+        reviews.push({ attemptNumber, artifactType: target.artifactType, artifactId: target.artifactId, label: target.label, targetAgent: target.targetAgent, criteriaAgent: target.criteriaAgent, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const executed = reviews.filter(review => review.score);
+    const failed = executed.filter(review => review.score?.passed === false);
+    const unavailable = reviews.filter(review => review.error);
+    result.delegatedSteps = result.delegatedSteps.filter(step => step.role !== "Quality Supervisor");
+    result.delegatedSteps.push(...reviews.map(review => ({
+      role: `Quality Supervisor · ${review.reviewer || "unavailable"}`,
+      tool: "review.request",
+      status: review.error ? "failed" as const : review.score?.passed ? "completed" as const : "failed" as const,
+      detail: review.error
+        ? `${review.label} 审核不可用：${review.error}`
+        : `${review.label} · ${review.score?.passed ? "通过" : "未通过"} · ${this.formatScore(review.score?.overall)}${review.score?.feedback ? ` · ${review.score.feedback}` : ""}`,
+    })));
+    return {
+      ...result,
+      reviewRequired: failed.length > 0 || unavailable.length > 0,
+      reviews,
+      selectedScriptId: resolvedScriptId,
+      quality: { attemptNumber, passed: failed.length === 0 && unavailable.length === 0, failedCount: failed.length, unavailableCount: unavailable.length },
+      nextAction: failed.length ? "Director 将根据审核问题执行一次自动返工。" : unavailable.length ? "检查审核模型配置后重试。" : result.nextAction,
+    };
+  }
+
+  private reviewTargets(result: StageResult, resolvedScriptId?: string): StageReviewTarget[] {
+    const data = result as StageResult & { scriptId?: string; created?: any[]; shotIds?: string[]; generated?: any[]; content?: string; delegation?: DelegationEvidence; development?: StageResult; screenplay?: StageResult; assets?: StageResult; directorPlan?: StageResult; storyboard?: StageResult; skeleton?: StageResult; adaptation?: StageResult };
+    if (result.stage === "pipeline") return [data.development, data.screenplay, data.assets, data.directorPlan, data.storyboard].filter(Boolean).flatMap(item => this.reviewTargets(item!, (item as any).scriptId || resolvedScriptId));
+    if (result.stage === "development") return [data.skeleton, data.adaptation].filter(Boolean).flatMap(item => this.reviewTargets(item!, resolvedScriptId));
+    if (result.stage === "skeleton" && data.content) return [{ artifactType: "stage", artifactId: "storySkeleton", label: "故事骨架", targetAgent: data.delegation?.agentKey || "screenwriter", reviewer: "script_supervisor", criteriaAgent: "screenwriter", output: { stage: "storySkeleton", content: data.content } }];
+    if (result.stage === "adaptation" && data.content) return [{ artifactType: "stage", artifactId: "adaptationStrategy", label: "改编策略", targetAgent: data.delegation?.agentKey || "screenwriter", reviewer: "script_supervisor", criteriaAgent: "screenwriter", output: { stage: "adaptationStrategy", content: data.content } }];
+    if (result.stage === "director_plan" && data.content) return [{ artifactType: "stage", artifactId: `directorPlan:${resolvedScriptId || "latest"}`, label: "导演规划", targetAgent: data.delegation?.agentKey || "director", reviewer: "supervisor", criteriaAgent: "director", output: { stage: "directorPlan", content: data.content } }];
+    if (result.stage === "screenplay" && data.scriptId) return [{ artifactType: "script", artifactId: String(data.scriptId), label: "剧本", targetAgent: (result as any).delegation?.agentKey || "screenwriter", reviewer: "script_supervisor", criteriaAgent: "screenwriter" }];
+    if (result.stage === "assets") {
+      return [{ artifactType: "stage", artifactId: `assets:${resolvedScriptId || "latest"}`, label: "人物、场景与道具设定", targetAgent: "set_decorator", reviewer: "producer", criteriaAgent: "set_decorator", output: { stage: "assets", assets: (data.created || []).map((item: any) => item.record || item.entity) } }];
+    }
+    if (result.stage === "storyboard") return [{ artifactType: "stage", artifactId: `storyboard:${resolvedScriptId || "latest"}`, label: "分镜规划", targetAgent: "assistant_director", reviewer: "supervisor", criteriaAgent: "assistant_director", output: { stage: "storyboard", shots: (result as any).result?.shots || data.shotIds || [] } }];
+    if (result.stage === "video") return [{ artifactType: "stage", artifactId: `video:${resolvedScriptId || "latest"}`, label: "视频片段", targetAgent: "vfx", reviewer: "supervisor", criteriaAgent: "vfx", output: { stage: "video", clips: data.generated || [] } }];
+    return [];
+  }
+
+  private failedReviews(result: StageResult): StageReviewEvidence[] {
+    const reviews = (result as any).reviews;
+    return Array.isArray(reviews) ? reviews.filter((item: StageReviewEvidence) => item.score?.passed === false) : [];
+  }
+
+  private formatScore(score?: number): string {
+    return typeof score === "number" ? `${Math.round(score * 100)} 分` : "无评分";
+  }
+
   private withEpisode(actionRun: ActionRun, scriptId: string): ActionRun {
     return { ...actionRun, episodeId: entityId("episode", scriptId) };
   }
@@ -360,9 +574,36 @@ export class ProductionStageService {
     const row = await db("o_agentWorkData").where(where).first();
     let current: Record<string, unknown> = {};
     try { current = row?.data ? JSON.parse(row.data) : {}; } catch {}
-    const data = JSON.stringify({ ...current, ...patch });
+    const data = JSON.stringify({
+      script: "",
+      scriptPlan: "",
+      storyboardTable: "",
+      assets: [],
+      storyboard: [],
+      workbench: { videoList: [] },
+      ...current,
+      ...patch,
+    });
     if (row) await db("o_agentWorkData").where({ id: row.id }).update({ data, updateTime: Date.now() });
     else await db("o_agentWorkData").insert({ ...where, data, createTime: Date.now(), updateTime: Date.now() });
+  }
+
+  private storyboardTableMarkdown(shots: StoryboardDraft["shots"]): string {
+    if (!shots.length) return "";
+    const cell = (value: unknown) => String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+    const rows = shots.map((shot, index) => [
+      `S${String(index + 1).padStart(2, "0")}`,
+      shot.shotSize || "-",
+      shot.cameraMovement || "-",
+      `${shot.duration || 0}s`,
+      shot.videoDesc,
+      shot.prompt,
+    ]);
+    return [
+      "| 镜号 | 景别 | 运镜 | 时长 | 画面与动作 | 生成提示词 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      ...rows.map(row => `| ${row.map(cell).join(" | ")} |`),
+    ].join("\n");
   }
 
   private textStageResult(actionRun: ActionRun, stage: ProductionStage, summary: string, content: string, delegation: DelegationEvidence, field: string, domain: WorkbenchDomain = "script"): StageResult {

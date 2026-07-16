@@ -1,11 +1,12 @@
 <template>
-  <aside class="director-dock" :class="{ collapsed: !isOpen }">
+  <aside class="director-dock" :class="{ collapsed: !isOpen, resizing: isResizing }" :style="dockStyle">
     <button v-if="!isOpen" class="dock-rail" type="button" title="打开 AI Director" @click="isOpen = true">
       <i-robot-one />
       <span v-if="running" class="activity-dot"></span>
     </button>
 
     <template v-else>
+      <div class="dock-resizer" title="拖动调整 AI Director 宽度" @mousedown.prevent="startResize"></div>
       <header class="dock-header">
         <div class="director-identity">
           <span class="director-mark"><i-robot-one /></span>
@@ -15,6 +16,7 @@
           </div>
         </div>
         <div class="header-actions">
+          <button type="button" :class="{ active: autoPilot }" :title="autoPilot ? '自动推进已开启' : '自动推进已关闭'" @click="autoPilot = !autoPilot"><i-play /></button>
           <button type="button" title="查看 Agent 能力" @click="showCapabilities = !showCapabilities"><i-people /></button>
           <button type="button" title="清空对话" @click="clearMessages"><i-delete /></button>
           <button type="button" title="收起" @click="isOpen = false"><i-right /></button>
@@ -55,6 +57,17 @@
               <i-time v-else />
               <div><code>{{ step.toolName }}</code><span>{{ step.purpose }}</span></div>
             </div>
+            <div v-if="activeProgress(message.actionRun)" class="run-progress">
+              <div><span>{{ activeProgress(message.actionRun)?.message }}</span><strong>{{ activeProgress(message.actionRun)?.percent }}%</strong></div>
+              <i><b :style="{ width: `${activeProgress(message.actionRun)?.percent || 0}%` }"></b></i>
+            </div>
+            <div v-if="liveEventsFor(message.actionRun).length" class="live-events">
+              <div v-for="event in liveEventsFor(message.actionRun)" :key="event.id" :class="['live-event', event.level]">
+                <span>{{ event.time }}</span>
+                <strong>{{ event.title }}</strong>
+                <p>{{ event.detail }}</p>
+              </div>
+            </div>
             <div v-if="delegatedSteps(message.actionRun).length" class="delegated-steps">
               <div v-for="step in delegatedSteps(message.actionRun)" :key="`${step.role}-${step.tool}`" class="delegated-row">
                 <span :class="['delegated-state', step.status]"></span>
@@ -69,6 +82,15 @@
               <div v-if="message.actionRun.result.artifactIds?.length"><dt>产物</dt><dd>{{ message.actionRun.result.artifactIds.length }} 项</dd></div>
               <div v-if="message.actionRun.result.nextAction"><dt>下一步</dt><dd>{{ message.actionRun.result.nextAction }}</dd></div>
             </dl>
+            <div v-if="reviewEvidence(message.actionRun).length" class="review-evidence">
+              <div v-for="review in reviewEvidence(message.actionRun)" :key="review.reviewId || `${review.artifactType}-${review.artifactId}`" :class="['review-row', { rejected: review.score?.passed === false }]">
+                <header><strong>{{ review.reviewer || "Quality Supervisor" }}</strong><span>{{ scoreLabel(review.score?.overall) }}</span></header>
+                <p>{{ review.score?.passed === false ? "未通过" : "通过" }} · {{ review.label || review.artifactId }} · 第 {{ review.attemptNumber || 1 }} 次 · {{ review.score?.evaluationMode === "ai" ? "AI 评审" : "规则降级" }} · 标准 {{ review.criteriaAgent || review.reviewer }}</p>
+                <ul v-if="review.score?.issues?.length"><li v-for="issue in review.score.issues" :key="issue">{{ issue }}</li></ul>
+                <p v-if="review.score?.feedback" class="review-feedback">返工：{{ review.score.feedback }}</p>
+                <p v-if="review.error" class="review-feedback">审核错误：{{ review.error }}</p>
+              </div>
+            </div>
             <p v-if="message.actionRun.error" class="run-error">{{ message.actionRun.error.message }}</p>
             <div v-if="message.actionRun.status === 'awaiting_confirmation'" class="confirm-actions">
               <button type="button" class="confirm-primary" :disabled="running" @click="confirmRun(message)">确认执行</button>
@@ -122,6 +144,7 @@ const messageList = ref<HTMLElement>();
 const showCapabilities = ref(false);
 const capabilities = ref<DirectorCapability[]>([]);
 let eventSource: EventSource | null = null;
+let projectLoadVersion = 0;
 
 interface DirectorCapability {
   stage: string;
@@ -152,9 +175,8 @@ const apiBaseUrl = computed(() => {
 const enabledCapabilities = computed(() => capabilities.value.filter(item => item.enabled));
 
 watch(() => props.routePath, path => store.syncRoute(path), { immediate: true });
-watch([() => props.projectId, instanceId], () => {
-  connectEvents();
-  void loadCapabilities();
+watch([() => props.projectId, baseUrl], ([projectId]) => {
+  void initializeProject(projectId);
 }, { immediate: true });
 watch(() => messages.value.length, async () => {
   await nextTick();
@@ -166,7 +188,27 @@ async function send() {
   if (!message || !props.projectId || running.value) return;
   draft.value = "";
   store.addMessage({ id: `user-${Date.now()}`, role: "user", content: message, createdAt: Date.now() });
-  await execute(message, false);
+  await execute(message, false, createRequestId());
+}
+
+async function initializeProject(projectId?: string | number) {
+  const loadVersion = ++projectLoadVersion;
+  eventSource?.close();
+  eventSource = null;
+  store.setProject(projectId);
+  if (!projectId) return;
+  await Promise.all([loadCapabilities(), loadHistory(projectId)]);
+  if (loadVersion !== projectLoadVersion || String(props.projectId) !== String(projectId)) return;
+  connectEvents();
+}
+
+async function loadHistory(projectId: string | number) {
+  try {
+    const response = await axios.get("/harness/workbench/actions", { params: { projectId, limit: 50 } });
+    store.setHistory((response as any).data || []);
+  } catch {
+    store.setHistory([]);
+  }
 }
 
 async function loadCapabilities() {
@@ -179,12 +221,13 @@ async function loadCapabilities() {
   }
 }
 
-async function execute(message: string, confirmed: boolean) {
+async function execute(message: string, confirmed: boolean, requestId: string) {
   running.value = true;
   try {
     const response = await axios.post(`/harness/workbench/${instanceId.value}/instructions`, {
       message,
       confirmed,
+      requestId,
       context: {
         route: props.routePath,
         domain: domain.value,
@@ -206,6 +249,10 @@ async function execute(message: string, confirmed: boolean) {
   } finally {
     running.value = false;
   }
+}
+
+function createRequestId(): string {
+  return window.crypto?.randomUUID?.() || `director-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 async function confirmRun(message: DirectorMessage) {
@@ -281,9 +328,27 @@ async function refreshActionRun(actionRunId: string) {
   }
 }
 
-function delegatedSteps(run: HarnessActionRun): Array<{ role: string; tool: string; status: "completed" | "pending"; detail: string }> {
+function delegatedSteps(run: HarnessActionRun): Array<{ role: string; tool: string; status: "completed" | "pending" | "failed"; detail: string }> {
   const steps = (run.result as any)?.delegatedSteps;
   return Array.isArray(steps) ? steps : [];
+}
+
+function reviewEvidence(run: HarnessActionRun): any[] {
+  const result = run.result as any;
+  if (result?.qualityLoop && (Array.isArray(result.qualityLoop.initialReviews) || Array.isArray(result.qualityLoop.finalReviews))) {
+    return [...(result.qualityLoop.initialReviews || []), ...(result.qualityLoop.finalReviews || [])];
+  }
+  if (Array.isArray(result?.reviews)) return result.reviews;
+  if (result?.score) return [{ reviewId: result.reviewId, attemptNumber: 1, artifactType: result.artifactType, artifactId: result.artifactId, reviewer: result.reviewer, criteriaAgent: result.criteriaAgent, score: result.score }];
+  return [];
+}
+
+function scoreLabel(value?: number) {
+  return typeof value === "number" ? `${Math.round(value * 100)} 分` : "无评分";
+}
+
+function activeProgress(run: HarnessActionRun) {
+  return run.toolCalls.find(call => call.status === "running")?.progress;
 }
 
 function statusLabel(status: HarnessActionRun["status"]) {
@@ -341,6 +406,20 @@ onBeforeUnmount(() => eventSource?.close());
   height: 7px;
   border-radius: 50%;
   background: #e34d59;
+}
+
+.run-progress {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--td-brand-color-light, #d9e8ff);
+  background: var(--td-brand-color-lightest, #f2f7ff);
+  font-size: 12px;
+
+  > div { display: flex; gap: 8px; justify-content: space-between; }
+  > div span { color: var(--td-text-color-secondary, #6b7280); }
+  > div strong { color: var(--td-brand-color, #0052d9); }
+  > i { display: block; height: 4px; margin-top: 7px; overflow: hidden; background: #d9e8ff; }
+  > i b { display: block; height: 100%; background: var(--td-brand-color, #0052d9); transition: width .2s ease; }
 }
 
 .dock-header {
@@ -467,11 +546,19 @@ onBeforeUnmount(() => eventSource?.close());
 .delegated-row span { color: #6b7280; line-height: 1.35; }
 .delegated-state { width: 7px; height: 7px; flex: 0 0 7px; margin-top: 4px; border-radius: 50%; background: #aab2bd; }
 .delegated-state.completed { background: #2ba471; }
+.delegated-state.failed { background: #d54941; }
 .result-grid { margin: 0; padding: 8px 9px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; border-top: 1px solid #edf0f2; }
 .result-grid div { min-width: 0; }
 .result-grid dt { color: #6b7280; font-size: 10px; }
 .result-grid dd { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .run-error { margin: 0; padding: 8px 9px; color: #c9353f; background: #fff1f0; font-size: 11px; }
+.review-evidence { display: grid; gap: 6px; padding: 8px 9px; border-top: 1px solid #edf0f2; }
+.review-row { padding: 7px; border-left: 3px solid #2ba471; background: #f2fbf7; font-size: 11px; }
+.review-row.rejected { border-left-color: #d54941; background: #fff5f5; }
+.review-row header { display: flex; justify-content: space-between; gap: 8px; }
+.review-row p { margin: 4px 0 0; color: #5a6475; }
+.review-row ul { margin: 5px 0 0; padding-left: 16px; color: #c9353f; }
+.review-feedback { color: #8c4b00 !important; }
 .confirm-actions { padding: 8px 9px; display: flex; gap: 7px; border-top: 1px solid #edf0f2; }
 .confirm-actions button { min-height: 28px; padding: 0 10px; border: 1px solid #c9cdd4; background: #fff; color: #374151; border-radius: 4px; }
 .confirm-actions .confirm-primary { border-color: var(--td-brand-color, #0052d9); background: var(--td-brand-color, #0052d9); color: #fff; }

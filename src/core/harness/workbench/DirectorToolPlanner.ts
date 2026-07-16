@@ -23,9 +23,13 @@ export class DirectorToolPlanner {
     }
 
     const productionStage = this.resolveProductionStage(message, context);
+    const selected = context.selected[0];
+    if (productionStage && /(生成|重做|重新|制作|创建|改写|更新|优化)/.test(message)) {
+      return this.buildProductionStage(productionStage, message, context);
+    }
+    if (/(审核|审查|质检|质量检查)/.test(message)) return this.buildReviewInstruction(message, context, selected);
     if (productionStage) return this.buildProductionStage(productionStage, message, context);
 
-    const selected = context.selected[0];
     const shot = context.selected.find(ref => ref.type === "shot");
     const shotSize = ["大远景", "远景", "全景", "中全景", "中景", "中近景", "近景", "特写", "大特写"].find(size => message.includes(size));
     if (shot && shotSize && /改|调整|设置|变成/.test(message)) {
@@ -66,6 +70,55 @@ export class DirectorToolPlanner {
     return undefined;
   }
 
+  private buildReviewInstruction(message: string, context: ProjectContext, selected?: ContextEntityRef): PlannedToolInstruction {
+    const reviewable = new Set(["script", "beat", "scene", "shot", "character", "prop", "location", "video", "audio", "timeline"]);
+    if (selected && reviewable.has(selected.type)) {
+      return this.build("review.request", { artifactType: selected.type, artifactId: String(selected.id) }, `审核 ${selected.label || selected.id}`, [selected]);
+    }
+
+    const state = context.productionState;
+    const recentStage = context.recentActionRuns.find(run => run.status === "completed" && run.stage)?.stage;
+    let artifactType = "stage";
+    let artifactId = "storySkeleton";
+    let label = "故事骨架";
+
+    if (/(故事骨架|剧情骨架|故事大纲|剧情大纲)/.test(message) && state.hasStorySkeleton) {
+      artifactId = "storySkeleton"; label = "故事骨架";
+    } else if (/(改编策略|改编方案)/.test(message) && state.hasAdaptationStrategy) {
+      artifactId = "adaptationStrategy"; label = "改编策略";
+    } else if (/(导演规划|拍摄规划|制片规划)/.test(message) && state.latestScriptId) {
+      artifactId = `directorPlan:${state.latestScriptId}`; label = "导演规划";
+    } else if (/(人物|角色|道具|场景|资产)/.test(message) && state.latestScriptId) {
+      artifactId = `assets:${state.latestScriptId}`; label = "人物、场景与道具设定";
+    } else if (/(分镜|镜头)/.test(message) && state.latestScriptId) {
+      artifactId = `storyboard:${state.latestScriptId}`; label = "分镜规划";
+    } else if (/(视频|影片|片段|成片)/.test(message) && state.latestVideoId) {
+      artifactType = "video"; artifactId = state.latestVideoId; label = "最新视频";
+    } else if (/(剧本|脚本)/.test(message) && state.latestScriptId) {
+      artifactType = "script"; artifactId = state.latestScriptId; label = state.latestScriptName || "最新剧本";
+    } else if (recentStage === "video" && state.latestVideoId) {
+      artifactType = "video"; artifactId = state.latestVideoId; label = "最新视频";
+    } else if (recentStage === "storyboard" && state.latestShotId) {
+      artifactType = "shot"; artifactId = state.latestShotId; label = "最新分镜";
+    } else if (recentStage === "assets" && state.latestScriptId) {
+      artifactId = `assets:${state.latestScriptId}`; label = "人物、场景与道具设定";
+    } else if (recentStage === "director_plan" && state.latestScriptId) {
+      artifactId = `directorPlan:${state.latestScriptId}`; label = "导演规划";
+    } else if (recentStage === "screenplay" && state.latestScriptId) {
+      artifactType = "script"; artifactId = state.latestScriptId; label = state.latestScriptName || "最新剧本";
+    } else if (["adaptation", "development"].includes(String(recentStage)) || state.hasAdaptationStrategy) {
+      artifactId = "adaptationStrategy"; label = "改编策略";
+    } else if (state.hasStorySkeleton) {
+      artifactId = "storySkeleton"; label = "故事骨架";
+    } else if (state.latestScriptId) {
+      artifactType = "script"; artifactId = state.latestScriptId; label = state.latestScriptName || "最新剧本";
+    } else {
+      return this.build("director.answer", { question: "当前项目还没有可审核产物。请先生成故事骨架。" }, "检查可审核产物", [], "说明审核所需的前置产物");
+    }
+
+    return this.build("review.request", { artifactType, artifactId }, `审核${label}`, [], `Quality Supervisor 审核最近生成的${label}`);
+  }
+
   private resolveProductionStage(message: string, context: ProjectContext): "skeleton" | "adaptation" | "development" | "screenplay" | "assets" | "director_plan" | "storyboard" | "video" | "pipeline" | undefined {
     if (/(完整流程|从小说到(?:电影|视频|成片)|从小说开始|启动.*制片|开始.*制片|一键.*制作|start.*production|novel.*(movie|video|production))/i.test(message)) return "pipeline";
     if (/(故事骨架|剧情骨架|故事大纲|剧情大纲).{0,8}(生成|创作|分析|重做|开始)|(?:生成|创作|分析|重做|开始).{0,8}(故事骨架|剧情骨架|故事大纲|剧情大纲)/i.test(message)) return "skeleton";
@@ -77,7 +130,9 @@ export class DirectorToolPlanner {
     if (/(导演规划|拍摄规划|镜头规划|制片规划).{0,8}(生成|制作|开始|重做)|(?:生成|制作|开始|重做).{0,8}(导演规划|拍摄规划|镜头规划|制片规划)/i.test(message)) return "director_plan";
     if (/(小说|原著).{0,12}(剧本|改编)|(?:生成|创作|改编|编写).{0,8}(剧本|脚本)/i.test(message)) return "screenplay";
     if (/^(开始|启动|开始吧|开始制作|进入剧本agent|开始进入剧本agent)[。！!\s]*$/i.test(message)) return context.productionState.nextStage === "complete" ? undefined : context.productionState.nextStage;
-    if (/^(继续|下一步|继续执行|继续制作|往下做|接着做|加速)[。！!\s]*$/i.test(message)) return context.productionState.nextStage === "complete" ? undefined : context.productionState.nextStage;
+    if (/^(?:请)?(?:继续|下一步|往下|接着|推进|加速)(?:(?:进入|执行|推进|开始|完成|进行|到|制作|下一|后续|个|阶段|步骤|流程|环节|吧|一下)|[。！!\s])*$/i.test(message)) {
+      return context.productionState.nextStage === "complete" ? undefined : context.productionState.nextStage;
+    }
     return undefined;
   }
 

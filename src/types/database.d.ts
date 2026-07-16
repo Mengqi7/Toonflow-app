@@ -1,4 +1,4 @@
-// @db-hash 789b1e9ba608f934f15c09acab2aa6db
+// @db-hash be0a352d83989dbe44b26e457ed88775
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -190,6 +190,21 @@ export interface o_eventChapter {
   'id'?: number;
   'novelId'?: number | null;
 }
+export interface o_generation_job {
+  'actionRunId': string;
+  'capability': string;
+  'createdAt': number;
+  'error'?: string | null;
+  'id'?: string | null;
+  'operationId'?: string | null;
+  'progress'?: number;
+  'projectId': number;
+  'providerId': string;
+  'request': string;
+  'result'?: string | null;
+  'status': string;
+  'updatedAt': number;
+}
 export interface o_image {
   'assetsId'?: number | null;
   'errorReason'?: string | null;
@@ -296,6 +311,7 @@ export interface o_review_report {
   'feedback'?: string | null;
   'id'?: string;
   'nodeId'?: string | null;
+  'projectId'?: number | null;
   'scores'?: string | null;
   'targetId'?: string | null;
   'targetType'?: string | null;
@@ -483,6 +499,7 @@ export interface DB {
   "o_comfyui_workflow_version": o_comfyui_workflow_version;
   "o_event": o_event;
   "o_eventChapter": o_eventChapter;
+  "o_generation_job": o_generation_job;
   "o_image": o_image;
   "o_imageFlow": o_imageFlow;
   "o_memory": o_memory;

@@ -84,7 +84,8 @@ export interface ReviewScore {
   technical: { resolution: number; artifacts: number; colorSpace: number; format: number };
   artistic: { composition: number; styleMatch: number; lighting: number; aesthetic: number };
   contentMatch: { sceneAccuracy: number; characterMatch: number; propAccuracy: number };
-  overall: number; passed: boolean; feedback?: string;
+  overall: number; passed: boolean; feedback?: string; issues?: string[];
+  evaluationMode?: "ai" | "rules"; evaluationError?: string;
 }
 
 export interface AgentReviewCriteria {

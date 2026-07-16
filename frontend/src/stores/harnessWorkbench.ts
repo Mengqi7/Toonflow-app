@@ -11,6 +11,7 @@ export interface HarnessEntityRef {
 
 export interface HarnessActionRun {
   id: string;
+  projectId: string;
   status: "planned" | "awaiting_confirmation" | "running" | "completed" | "failed" | "cancelled";
   userInstruction: string;
   plan: {
@@ -20,9 +21,11 @@ export interface HarnessActionRun {
     requiresConfirmation: boolean;
     confirmationReason?: string;
   };
-  toolCalls: Array<{ id: string; toolName: string; status: string; input: unknown; output?: unknown; error?: { message: string; retryable: boolean } }>;
+  toolCalls: Array<{ id: string; toolName: string; status: string; input: unknown; output?: unknown; progress?: { percent: number; message: string; updatedAt: number }; error?: { message: string; retryable: boolean } }>;
   result?: any;
   error?: { message: string; retryable: boolean };
+  reviewState?: "not_required" | "pending" | "approved" | "rejected";
+  createdAt: number;
   updatedAt: number;
 }
 
@@ -43,20 +46,28 @@ const routeDomains: Record<string, HarnessDomain> = {
   "/assets": "assets",
 };
 
+function welcomeMessage(): DirectorMessage {
+  return {
+    id: "director-welcome",
+    role: "director",
+    content: "项目上下文已连接。我会根据当前页面和选中对象执行影视制作操作。",
+    createdAt: Date.now(),
+  };
+}
+
+function normalizeProjectId(value?: string | number): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  return String(value).replace(/^project:/, "");
+}
+
 export default defineStore("harnessWorkbenchV3", () => {
   const isOpen = ref(true);
   const domain = ref<HarnessDomain>("script");
   const episodeId = ref<string | number>();
   const selected = ref<HarnessEntityRef[]>([]);
   const visible = ref<HarnessEntityRef[]>([]);
-  const messages = ref<DirectorMessage[]>([
-    {
-      id: "director-welcome",
-      role: "director",
-      content: "项目上下文已连接。我会根据当前页面和选中对象执行影视制作操作。",
-      createdAt: Date.now(),
-    },
-  ]);
+  const activeProjectId = ref<string>();
+  const messages = ref<DirectorMessage[]>([welcomeMessage()]);
   const refreshRevision = ref(0);
   const running = ref(false);
   const connected = ref(false);
@@ -86,27 +97,75 @@ export default defineStore("harnessWorkbenchV3", () => {
     if (messages.value.length > 100) messages.value.splice(0, messages.value.length - 100);
   }
 
+  function belongsToActiveProject(actionRun: HarnessActionRun): boolean {
+    return !activeProjectId.value || normalizeProjectId(actionRun.projectId) === activeProjectId.value;
+  }
+
+  function actionRunContent(actionRun: HarnessActionRun): string {
+    if (actionRun.status === "completed") return actionRun.result?.reply || actionRun.result?.summary || actionRun.plan.summary;
+    if (actionRun.status === "awaiting_confirmation") return "等待确认";
+    if (actionRun.status === "planned") return `已规划：${actionRun.plan.summary}`;
+    if (actionRun.status === "running") {
+      const progress = actionRun.toolCalls.find(call => call.status === "running")?.progress;
+      return progress?.message || `执行中：${actionRun.plan.summary}`;
+    }
+    return actionRun.error?.message || actionRun.plan.summary;
+  }
+
+  function setProject(projectId?: string | number) {
+    const nextProjectId = normalizeProjectId(projectId);
+    if (nextProjectId === activeProjectId.value) return;
+    activeProjectId.value = nextProjectId;
+    episodeId.value = undefined;
+    selected.value = [];
+    visible.value = [];
+    running.value = false;
+    connected.value = false;
+    messages.value = [welcomeMessage()];
+  }
+
+  function setHistory(actionRuns: HarnessActionRun[]) {
+    const projectRuns = actionRuns
+      .filter(belongsToActiveProject)
+      .sort((left, right) => left.createdAt - right.createdAt);
+    const historyMessages = projectRuns.flatMap(actionRun => [
+      {
+        id: `history-user-${actionRun.id}`,
+        role: "user" as const,
+        content: actionRun.userInstruction,
+        createdAt: actionRun.createdAt,
+      },
+      {
+        id: `director-${actionRun.id}`,
+        role: "director" as const,
+        content: actionRunContent(actionRun),
+        actionRun,
+        createdAt: actionRun.updatedAt,
+      },
+    ]);
+    messages.value = [welcomeMessage(), ...historyMessages.slice(-99)];
+  }
+
   function replaceActionRun(actionRun: HarnessActionRun) {
+    if (!belongsToActiveProject(actionRun)) return;
     const message = [...messages.value].reverse().find(item => item.actionRun?.id === actionRun.id);
     if (message) {
       message.actionRun = actionRun;
-      message.content = actionRun.status === "completed"
-        ? actionRun.result?.reply || actionRun.result?.summary || actionRun.plan.summary
-        : actionRun.status === "awaiting_confirmation"
-          ? "Awaiting your confirmation"
-          : actionRun.error?.message || actionRun.plan.summary;
+      message.content = actionRunContent(actionRun);
+      message.createdAt = actionRun.updatedAt || message.createdAt;
       return;
     }
     addMessage({
       id: `director-${actionRun.id}`,
       role: "director",
-      content: actionRun.status === "awaiting_confirmation" ? "Awaiting your confirmation" : actionRun.plan.summary,
+      content: actionRunContent(actionRun),
       actionRun,
-      createdAt: Date.now(),
+      createdAt: actionRun.updatedAt || Date.now(),
     });
   }
 
   function applyActionRun(actionRun: HarnessActionRun) {
+    if (!belongsToActiveProject(actionRun)) return;
     replaceActionRun(actionRun);
     if (!messages.value.some(item => item.actionRun?.id === actionRun.id)) addMessage({
       id: `director-${actionRun.id}-${Date.now()}`,
@@ -128,7 +187,7 @@ export default defineStore("harnessWorkbenchV3", () => {
   }
 
   function clearMessages() {
-    messages.value = messages.value.slice(0, 1);
+    messages.value = [welcomeMessage()];
   }
 
   return {
@@ -137,6 +196,7 @@ export default defineStore("harnessWorkbenchV3", () => {
     episodeId,
     selected,
     visible,
+    activeProjectId,
     messages,
     refreshRevision,
     running,
@@ -146,6 +206,8 @@ export default defineStore("harnessWorkbenchV3", () => {
     setEpisode,
     setSelection,
     setVisible,
+    setProject,
+    setHistory,
     addMessage,
     replaceActionRun,
     applyActionRun,

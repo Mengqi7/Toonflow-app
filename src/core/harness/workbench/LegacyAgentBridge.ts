@@ -77,17 +77,22 @@ export class LegacyAgentBridge {
     return { name: match[1].trim(), content: match[2].trim(), delegation: this.evidence(capability) };
   }
 
-  async deriveAssets(input: { script: string; instruction: string }): Promise<AssetDraft> {
+  async deriveAssets(input: { script: string; instruction: string; existingAssets?: Pick<AssetDraft, "characters" | "props" | "locations"> }): Promise<AssetDraft> {
     const capability = await directorCapabilityCatalog.resolve("assets");
     const value = await this.askJson<AssetDraft>(capability, [
       "You are invoked by the Harness Tool Runtime. Do not call Socket.IO tools.",
       "Return JSON only with characters, props and locations arrays.",
       "Each item requires name, description and prompt. Keep each array to at most six items.",
+      input.existingAssets
+        ? `Update the existing asset set in place. Return the same names under the same characters, props and locations arrays; do not add, remove, move or rename items. Existing assets:\n${JSON.stringify(input.existingAssets, null, 2)}`
+        : "Create the minimum complete set of characters, props and locations required by the screenplay.",
       `Director instruction: ${input.instruction}`,
       "Screenplay:",
       input.script,
     ].join("\n\n"));
-    return { ...this.normaliseAssets(value), delegation: this.evidence(capability) };
+    const normalised = this.normaliseAssets(value);
+    const assets = input.existingAssets ? this.mergeExistingAssets(input.existingAssets, normalised) : normalised;
+    return { ...assets, delegation: this.evidence(capability) };
   }
 
   async planStoryboard(input: { script: string; assets: string[]; instruction: string }): Promise<StoryboardDraft> {
@@ -166,6 +171,11 @@ export class LegacyAgentBridge {
   }
 
   private normaliseAssets(value: AssetDraft): AssetDraft {
+    const raw = value as any;
+    const candidates = [raw, raw?.assets, raw?.updatedAssets, raw?.result, raw?.data].filter(item => item && typeof item === "object" && !Array.isArray(item));
+    const root = candidates.find(item => item.characters || item.props || item.locations || item.roles || item.scenes) || raw;
+    const flat = [raw?.assets, raw?.updatedAssets, raw?.result, raw?.data].find(Array.isArray) as any[] | undefined;
+    const byType = (types: string[]) => flat?.filter(item => types.includes(String(item?.type || item?.category || item?.assetType || "").toLowerCase())) || [];
     const normalise = (items: unknown) => Array.isArray(items)
       ? items.slice(0, 12).map((item: any) => ({
         name: this.requireText(item?.name, "asset name"),
@@ -173,9 +183,32 @@ export class LegacyAgentBridge {
         prompt: this.requireText(item?.prompt, "asset prompt"),
       }))
       : [];
-    const result = { characters: normalise(value?.characters), props: normalise(value?.props), locations: normalise(value?.locations) };
-    if (!result.characters.length && !result.props.length && !result.locations.length) throw new Error("Asset Agent returned no usable assets");
+    const result = {
+      characters: normalise(root?.characters || root?.roles || root?.characterAssets || byType(["character", "role", "人物", "角色"])),
+      props: normalise(root?.props || root?.propAssets || root?.tools || byType(["prop", "tool", "道具"])),
+      locations: normalise(root?.locations || root?.locationAssets || root?.scenes || byType(["location", "scene", "场景", "地点"])),
+    };
+    if (!result.characters.length && !result.props.length && !result.locations.length) {
+      throw new Error(`Asset Agent returned no usable assets (keys: ${Object.keys(raw || {}).join(", ") || "none"})`);
+    }
     return result as AssetDraft;
+  }
+
+  private mergeExistingAssets(existing: Pick<AssetDraft, "characters" | "props" | "locations">, incoming: AssetDraft): Pick<AssetDraft, "characters" | "props" | "locations"> {
+    let matched = 0;
+    const merge = (current: AssetDraft["characters"], updates: AssetDraft["characters"]) => current.map(item => {
+      const update = updates.find(candidate => candidate.name === item.name);
+      if (!update) return item;
+      matched += 1;
+      return { name: item.name, description: update.description, prompt: update.prompt };
+    });
+    const result = {
+      characters: merge(existing.characters, incoming.characters),
+      props: merge(existing.props, incoming.props),
+      locations: merge(existing.locations, incoming.locations),
+    };
+    if (!matched) throw new Error("Asset Agent did not preserve any existing asset names");
+    return result;
   }
 
   private requireText(value: unknown, label: string): string {

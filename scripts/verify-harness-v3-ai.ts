@@ -2,11 +2,22 @@ import assert from "node:assert/strict";
 import { db } from "../src/utils/db";
 import { ContextResolver } from "../src/core/harness/workbench/ContextResolver";
 import { conversationalDirector, workbenchToolRuntime } from "../src/core/harness/workbench";
+import { harness } from "../src/core/harness/init";
+import { ReviewPipeline } from "../src/review/ReviewPipeline";
+import Ai from "../src/utils/ai";
 
 async function main() {
   const projectId = Date.now();
   const instanceId = `verify-harness-v3-ai-${projectId}`;
   try {
+    harness.reviewPipeline = new ReviewPipeline({
+      aiEvaluate: async prompt => (await Ai.Text("universalAi", false, 0).invoke({
+        messages: [
+          { role: "system", content: "你是影视工业质量监制，只返回要求的 JSON。" },
+          { role: "user", content: prompt },
+        ],
+      })).text,
+    });
     await db("o_project").insert({
       id: projectId,
       name: "__HARNESS_V3_AI_VERIFY__",
@@ -44,7 +55,10 @@ async function main() {
     assert.equal(result.delegation.agentKey, "scriptAgent:storySkeletonAgent");
     assert.ok(result.delegation.skillId);
     assert.ok(result.delegation.modelName);
-    console.log(JSON.stringify({ ok: true, realModel: true, stage: result.stage, agentKey: result.delegation.agentKey, skillId: result.delegation.skillId, modelName: result.delegation.modelName, chars: workData.storySkeleton.length }));
+    assert.equal(result.reviews?.length, 1);
+    assert.equal(result.reviews?.[0]?.score?.evaluationMode, "ai");
+    assert.equal(typeof result.reviews?.[0]?.score?.overall, "number");
+    console.log(JSON.stringify({ ok: true, realModel: true, realAiReview: true, stage: result.stage, agentKey: result.delegation.agentKey, skillId: result.delegation.skillId, modelName: result.delegation.modelName, reviewScore: result.reviews[0].score.overall, reviewPassed: result.reviews[0].score.passed, qualityAttempts: result.qualityLoop?.attempts || 1, chars: workData.storySkeleton.length }));
   } finally {
     await db("o_action_run").where({ instanceId }).delete().catch(() => undefined);
     await db("o_agentWorkData").where({ projectId }).delete().catch(() => undefined);

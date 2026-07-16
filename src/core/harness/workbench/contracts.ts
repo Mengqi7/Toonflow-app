@@ -77,7 +77,15 @@ export interface ProductionState {
   hasDirectorPlan: boolean;
   shotCount: number;
   videoCount: number;
-  nextStage: "development" | "screenplay" | "assets" | "director_plan" | "storyboard" | "video" | "complete";
+  latestScriptId?: string;
+  latestScriptName?: string;
+  latestAssetId?: string;
+  latestShotId?: string;
+  latestVideoId?: string;
+  qualityBlocked: boolean;
+  qualityBlockedStage?: "skeleton" | "adaptation" | "development" | "screenplay" | "assets" | "director_plan" | "storyboard" | "video" | "pipeline";
+  lastReviewDecision?: string;
+  nextStage: "skeleton" | "adaptation" | "development" | "screenplay" | "assets" | "director_plan" | "storyboard" | "video" | "pipeline" | "complete";
 }
 
 export type ActionRunStatus = "planned" | "awaiting_confirmation" | "running" | "completed" | "failed" | "cancelled";
@@ -90,6 +98,11 @@ export interface ToolCallRecord {
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   startedAt?: number;
   completedAt?: number;
+  progress?: {
+    percent: number;
+    message: string;
+    updatedAt: number;
+  };
   error?: ToolFailure;
 }
 

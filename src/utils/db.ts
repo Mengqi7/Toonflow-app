@@ -31,6 +31,20 @@ const db = knex({
   connection: {
     filename: dbPath,
   },
+  pool: {
+    min: 1,
+    max: 1,
+    afterCreate(connection: any, done: (error: Error | null, connection?: any) => void) {
+      try {
+        connection.pragma("busy_timeout = 10000");
+        connection.pragma("journal_mode = WAL");
+        connection.pragma("synchronous = NORMAL");
+        done(null, connection);
+      } catch (error) {
+        done(error instanceof Error ? error : new Error(String(error)), connection);
+      }
+    },
+  },
   useNullAsDefault: true,
 });
 

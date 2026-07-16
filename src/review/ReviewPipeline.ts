@@ -60,7 +60,7 @@ export class ReviewPipeline {
     if (this.criteriaCache.has(agentId)) return this.criteriaCache.get(agentId)!;
 
     const criteria: ReviewCriterion[] = [];
-    let passThreshold = 0.75;
+    let passThreshold = 0.8;
 
     if (this.options.rulesEngine) {
       const allRules = this.options.rulesEngine.listAll();
@@ -142,11 +142,14 @@ export class ReviewPipeline {
       try {
         const aiScore = await this.aiEvaluate(agentId, agentOutput, reference, criteria);
         this.mergeScores(scores, aiScore);
+        scores.evaluationMode = "ai";
       } catch (err) {
-        // 失败时使用规则降级
+        scores.evaluationMode = "rules";
+        scores.evaluationError = err instanceof Error ? err.message : String(err);
         this.applyRuleBasedScore(scores, agentOutput, reference);
       }
     } else {
+      scores.evaluationMode = "rules";
       this.applyRuleBasedScore(scores, agentOutput, reference);
     }
 
@@ -159,9 +162,11 @@ export class ReviewPipeline {
                    + cs * this.weights.dimensions.contentMatch;
 
     // 通过阈值: 来自 agent 标准 或 全局 criteria
-    const threshold = criteria.length > 0
-      ? criteria.reduce((s, c) => s + c.threshold * c.weight, 0)
-      : agentCriteria.passThreshold;
+    const criteriaWeight = criteria.reduce((sum, criterion) => sum + Math.max(0, criterion.weight), 0);
+    const criteriaThreshold = criteriaWeight > 0
+      ? criteria.reduce((sum, criterion) => sum + criterion.threshold * Math.max(0, criterion.weight), 0) / criteriaWeight
+      : 0;
+    const threshold = Math.max(agentCriteria.passThreshold, criteriaThreshold);
     scores.passed = scores.overall >= threshold;
 
     if (!scores.passed) {
@@ -169,9 +174,10 @@ export class ReviewPipeline {
         const val = this.getCriterionValue(scores, c.name);
         return val !== undefined && val < c.threshold;
       });
-      scores.feedback = failedCriteria.length > 0
+      const criteriaFeedback = failedCriteria.length > 0
         ? failedCriteria.map(c => `${c.name}: ${c.description} (score ${this.getCriterionValue(scores, c.name)?.toFixed(2)} < ${c.threshold})`).join("; ")
         : `Overall score ${scores.overall.toFixed(2)} below threshold ${threshold.toFixed(2)}`;
+      scores.feedback = [scores.feedback, criteriaFeedback].filter(Boolean).join("; ");
     }
 
     // P1-4 基础: 异步记录审核事件到 MemoryBus
@@ -205,18 +211,20 @@ export class ReviewPipeline {
 ${criteriaList}
 
 # 生成内容
-${JSON.stringify(agentOutput, null, 2).slice(0, 2000)}
+${this.promptExcerpt(agentOutput, 12_000)}
 
 # 参考内容
-${typeof reference === "string" ? reference.slice(0, 1000) : JSON.stringify(reference, null, 2).slice(0, 1000)}
+${this.promptExcerpt(reference, 6_000)}
 
 # 返回格式
 请只返回 JSON 格式的评分(0-1,越高越好)，覆盖以下字段：
 - technical: { resolution, artifacts, colorSpace, format }
 - artistic: { composition, styleMatch, lighting, aesthetic }
 - contentMatch: { sceneAccuracy, characterMatch, propAccuracy }
+- issues: 最多 5 条具体问题
+- feedback: 一条可直接交给原 Agent 的返工指令
 
-示例: {"technical":{"resolution":0.9,"artifacts":0.85,"colorSpace":0.9,"format":0.95},"artistic":{"composition":0.8,"styleMatch":0.85,"lighting":0.75,"aesthetic":0.8},"contentMatch":{"sceneAccuracy":0.9,"characterMatch":0.85,"propAccuracy":0.8}}`;
+示例: {"technical":{"resolution":0.9,"artifacts":0.85,"colorSpace":0.9,"format":0.95},"artistic":{"composition":0.8,"styleMatch":0.85,"lighting":0.75,"aesthetic":0.8},"contentMatch":{"sceneAccuracy":0.9,"characterMatch":0.85,"propAccuracy":0.8},"issues":["人物动机缺少铺垫"],"feedback":"补充第二幕人物选择的因果链。"}`;
 
     const result = await this.options.aiEvaluate!(prompt);
     const cleaned = result.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
@@ -228,6 +236,8 @@ ${typeof reference === "string" ? reference.slice(0, 1000) : JSON.stringify(refe
       technical: { ...DEFAULT_WEIGHTS.technical, ...(parsed.technical || {}) } as any,
       artistic: { ...DEFAULT_WEIGHTS.artistic, ...(parsed.artistic || {}) } as any,
       contentMatch: { ...DEFAULT_WEIGHTS.contentMatch, ...(parsed.contentMatch || {}) } as any,
+      issues: Array.isArray(parsed.issues) ? parsed.issues.slice(0, 5).map(String) : undefined,
+      feedback: typeof parsed.feedback === "string" ? parsed.feedback.trim() : undefined,
     };
   }
 
@@ -281,6 +291,8 @@ ${typeof reference === "string" ? reference.slice(0, 1000) : JSON.stringify(refe
         if (typeof v === "number") (scores.contentMatch as any)[k] = v;
       }
     }
+    if (partial.feedback) scores.feedback = partial.feedback;
+    if (partial.issues?.length) scores.issues = partial.issues;
   }
 
   private getDefaultCriteria(): ReviewCriterion[] {
@@ -289,6 +301,12 @@ ${typeof reference === "string" ? reference.slice(0, 1000) : JSON.stringify(refe
       { name: "composition", weight: 0.3, threshold: 0.7, description: "结构完整" },
       { name: "styleMatch", weight: 0.4, threshold: 0.7, description: "风格匹配" },
     ];
+  }
+
+  private promptExcerpt(value: unknown, maxChars: number): string {
+    const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, maxChars)}\n...[审核上下文已按 ${maxChars} 字符边界截断，不能将截断本身判定为产物缺失]`;
   }
 
   // ── 生成 RetryInstruction ──────────────────────

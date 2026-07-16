@@ -423,7 +423,7 @@ export function registerDomainTools(registry: ToolRegistry, production: Producti
     authorization: "review",
     idempotency: "action_run",
     requiresConfirmation: false,
-    inputSchema: { type: "object", additionalProperties: false, required: ["artifactType", "artifactId"], properties: { artifactType: { enum: ["script", "beat", "scene", "shot", "character", "prop", "location", "video", "audio", "timeline"] }, artifactId: { type: "string", minLength: 1 }, reviewer: { type: "string" }, reference: {} } },
+    inputSchema: { type: "object", additionalProperties: false, required: ["artifactType", "artifactId"], properties: { artifactType: { enum: ["stage", "script", "beat", "scene", "shot", "character", "prop", "location", "video", "audio", "timeline"] }, artifactId: { type: "string", minLength: 1 }, reviewer: { type: "string" }, reference: {} } },
     outputSchema: genericObjectOutput,
     execute: async (input: any, context) => reviewDomainService.request(context.actionRun, input),
   });

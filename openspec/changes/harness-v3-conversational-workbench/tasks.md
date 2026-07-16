@@ -65,9 +65,19 @@
 
 ## 9. Unified Director intelligence and legacy capability restoration
 
-- [ ] 9.1 Build one capability catalog from Harness agents, Toonflow Agent deployments and all editable Skill files
-- [ ] 9.2 Make Agent model and Skill settings the runtime source of truth for Director delegation
-- [ ] 9.3 Restore story skeleton, adaptation strategy, screenplay, asset, director-plan, storyboard and video stages behind typed Harness tools
-- [ ] 9.4 Persist intermediate outputs into the existing Toonflow script and production workspaces and emit refresh patches
-- [ ] 9.5 Support contextual start, continue, revise, status and general conversation without reporting read-only context as completed production work
-- [ ] 9.6 Show delegated Agent, Skill, model, artifacts and next action in AI Director and verify the complete no-mouse workflow
+- [x] 9.1 Build one capability catalog from Harness agents, Toonflow Agent deployments and all editable Skill files
+- [x] 9.2 Make Agent model and Skill settings the runtime source of truth for Director delegation
+- [x] 9.3 Restore story skeleton, adaptation strategy, screenplay, asset, director-plan, storyboard and video stages behind typed Harness tools
+- [x] 9.4 Persist intermediate outputs into the existing Toonflow script and production workspaces and emit refresh patches
+- [x] 9.5 Support contextual start, continue, revise, status and general conversation without reporting read-only context as completed production work
+- [x] 9.6 Show delegated Agent, Skill, model, artifacts and next action in AI Director and verify the complete no-mouse workflow
+
+## 10. Acceptance repair: executable quality loop
+
+- [x] 10.1 Promote story skeleton, adaptation strategy and director plan to stable reviewable stage artifacts
+- [x] 10.2 Route manual review instructions deterministically to the latest valid project artifact
+- [x] 10.3 Connect the configured AI model to ReviewPipeline and persist score, issues and decisions
+- [x] 10.4 Automatically review nested development and pipeline outputs without reporting placeholder review steps
+- [x] 10.5 Add one bounded Agent regeneration attempt using structured review feedback
+- [x] 10.6 Show review attempts, scores, issues and reroute evidence in AI Director
+- [x] 10.7 Verify start, automatic review, manual review, failure reroute and continuation end to end

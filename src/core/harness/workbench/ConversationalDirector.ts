@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { v4 as uuid } from "uuid";
 import type { ToolRuntime } from "../tools/ToolRuntime";
 import type { ProjectContext } from "./contracts";
 import { DirectorToolPlanner, type PlannedToolInstruction } from "./DirectorToolPlanner";
@@ -10,10 +11,16 @@ export class ConversationalDirector {
     this.planner = new DirectorToolPlanner(runtime.registry);
   }
 
-  async executeInstruction(instanceId: string, message: string, context: ProjectContext, confirmed = false) {
+  async executeInstruction(instanceId: string, message: string, context: ProjectContext, confirmed = false, requestId?: string) {
     const planned = await this.planInstruction(message, context);
     const idempotencyKey = createHash("sha256")
-      .update(JSON.stringify({ instanceId, message, selected: context.selected.map(ref => ref.id), input: planned.input }))
+      .update(JSON.stringify({
+        instanceId,
+        requestId: requestId || uuid(),
+        message,
+        selected: context.selected.map(ref => ref.id),
+        input: planned.input,
+      }))
       .digest("hex");
     return this.runtime.execute({
       instanceId,

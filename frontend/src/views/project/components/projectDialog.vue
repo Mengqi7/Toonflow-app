@@ -186,7 +186,7 @@
             <div class="promptEditorWrapper">
               <div class="promptEditorHeader">
                 <div class="aiExtractInline">
-                  <t-tabs :value="visualManualTabValue" size="medium" @change="(v) => (visualManualTabValue = v)">
+                  <t-tabs :value="visualManualTabValue" size="medium" @change="handleVisualManualTabChange">
                     <t-tab-panel v-for="tab in visualManualTabData" :key="tab.value" :value="tab.value" :label="tab.label">
                       <MdEditor
                         v-model="tab.data"
@@ -257,7 +257,7 @@
             <div class="promptEditorWrapper">
               <div class="promptEditorHeader">
                 <div class="aiExtractInline">
-                  <t-tabs :value="directorManualTabValue" size="medium" @change="(v) => (directorManualTabValue = v)">
+                  <t-tabs :value="directorManualTabValue" size="medium" @change="handleDirectorManualTabChange">
                     <t-tab-panel v-for="tab in directorManualTabData" :key="tab.value" :value="tab.value" :label="tab.label">
                       <MdEditor
                         v-model="tab.data"
@@ -530,6 +530,10 @@ const editingVisualManual = ref<VisualManualItem | null>(null);
 const visualManualForm = ref({ name: "", images: [] as string[], stylePath: "" });
 const visualManualCoverInputRef = ref<HTMLInputElement>();
 const visualManualTabValue = ref<TabValue>("README");
+
+function handleVisualManualTabChange(value: TabValue) {
+  visualManualTabValue.value = value;
+}
 const visualManualTabData = ref<Data[]>(DEFAULT_TAB_DATA());
 
 function fetchVisualManuals() {
@@ -719,6 +723,10 @@ const editingDirectorManual = ref<DirectorManualItem | null>(null);
 const directorDialogVisible = ref(false);
 const directorManualOptions = ref<DirectorManualItem[]>([]);
 const directorManualTabValue = ref<TabValue>("README");
+
+function handleDirectorManualTabChange(value: TabValue) {
+  directorManualTabValue.value = value;
+}
 const directorManualTabData = ref<Data[]>(DIRECTOR_DEFAULT_TAB_DATA());
 //查询导演手册
 function queryDirectorManual() {
