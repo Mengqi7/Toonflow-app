@@ -1,6 +1,7 @@
 import { v4 as uuid } from "uuid";
 import type { MemoryNamespace, MemoryEntry, MemoryQuery } from "./types";
 import { db } from "@/utils/db";
+import { cosineSimilarity, getEmbedding } from "@/utils/agent/embedding";
 
 export class MemoryBus {
   private cache = new Map<string, MemoryEntry[]>();
@@ -83,6 +84,17 @@ export class MemoryBus {
   }
 
   async semanticSearch(query: string, namespace: MemoryNamespace, limit = 5): Promise<MemoryEntry[]> {
+    const rows = await db("o_memory").where("namespace", namespace).whereNotNull("embedding").select("*");
+    if (!rows.length) return this.get({ namespaces: [namespace], limit });
+    try {
+      const queryEmbedding = await getEmbedding(query);
+      return rows.map((row: any) => ({
+        id: row.id, namespace: row.namespace, key: row.key, value: this.tryParse(row.value), type: row.type, timestamp: row.timestamp, ttl: row.ttl,
+        score: cosineSimilarity(queryEmbedding, this.decodeEmbedding(row.embedding)),
+      })).sort((a: any, b: any) => b.score - a.score).slice(0, limit).map(({ score: _score, ...entry }: any) => entry as MemoryEntry);
+    } catch {
+      return this.get({ namespaces: [namespace], limit });
+    }
     // Placeholder: 返回最近的条目。实际 RAG 需要调用 embedding 模型。
     return this.get({ namespaces: [namespace], limit });
   }
@@ -99,5 +111,13 @@ export class MemoryBus {
 
   private tryParse(v: string): any {
     try { return JSON.parse(v); } catch { return v; }
+  }
+
+  private decodeEmbedding(value: unknown): number[] {
+    if (Buffer.isBuffer(value)) return Array.from(new Float32Array(value.buffer, value.byteOffset, Math.floor(value.byteLength / 4)));
+    if (typeof value === "string") {
+      try { return JSON.parse(value); } catch { return []; }
+    }
+    return Array.isArray(value) ? value.map(Number) : [];
   }
 }

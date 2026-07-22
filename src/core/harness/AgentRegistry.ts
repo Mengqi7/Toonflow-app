@@ -1,7 +1,7 @@
 import fg from "fast-glob";
 import path from "path";
 import { pathToFileURL } from "url";
-import type { AgentDescriptor, AgentCapability, FilmAgentRole, AgentContext, BaseAgent } from "./types";
+import type { AgentDescriptor, AgentCapability, FilmAgentRole, AgentContext, BaseAgent, AgentContract } from "./types";
 
 export class AgentRegistry {
   private agents = new Map<string, AgentDescriptor>();
@@ -56,6 +56,27 @@ export class AgentRegistry {
 
   findByRole(role: FilmAgentRole): AgentDescriptor | undefined {
     return [...this.agents.values()].find(function(a) { return a.role === role; });
+  }
+
+  getContract(idOrRole: string): AgentContract {
+    const descriptor = this.agents.get(idOrRole) || this.findByRole(idOrRole as FilmAgentRole);
+    if (!descriptor) throw new Error("Agent '" + idOrRole + "' not registered");
+    if ((descriptor as AgentDescriptor & { contract?: AgentContract }).contract) {
+      return (descriptor as AgentDescriptor & { contract: AgentContract }).contract;
+    }
+    return {
+      role: descriptor.role,
+      name: descriptor.name,
+      description: `${descriptor.name} 负责 ${descriptor.capabilities.join("、")}。`,
+      triggerConditions: [`导演调度 ${descriptor.role} 阶段`],
+      inputs: [{ name: "context", type: "object", required: false, description: "上游产物与项目上下文", source: "upstream" }],
+      outputs: [{ name: "data", type: "object", description: "结构化工种产物" }],
+      dependsOn: descriptor.dependencies || [],
+      canBeReroutedFrom: [],
+      canRerouteTo: [],
+      onFailure: "ask_user",
+      maxRetries: 2,
+    };
   }
 
   async createInstance(idOrRole: string, ctx: AgentContext): Promise<BaseAgent> {

@@ -63,24 +63,24 @@ export class DirectorCapabilityCatalog {
     };
   }
 
-  async list(): Promise<Array<DirectorCapability & { capabilities: string[] }>> {
+  async list(): Promise<Array<DirectorCapability & { capabilities: string[]; systemPrompt?: string; skillContent?: string }>> {
     const results: any[] = [];
     for (const stage of Object.keys(STAGES) as DirectorStage[]) {
       try {
-        const { skillContent: _content, ...capability } = await this.resolve(stage);
+        const { skillContent, ...capability } = await this.resolve(stage);
         const harnessAgent = this.agentRegistry?.findByRole(capability.harnessRole as any);
-        results.push({ ...capability, capabilities: harnessAgent?.capabilities || [] });
+        results.push({ ...capability, capabilities: harnessAgent?.capabilities || [], systemPrompt: skillContent, skillContent });
       } catch (error) {
         const base = STAGES[stage];
-        results.push({ ...base, skillId: base.skillFile.replace(/\.md$/i, ""), skillName: base.skillFile, modelName: "", enabled: false, capabilities: [], error: error instanceof Error ? error.message : String(error) } as any);
+        let skillContent = "";
+        try { skillContent = await fs.readFile(path.join(getPath("skills"), base.skillFile), "utf-8"); } catch { /* skill is optional for disabled entries */ }
+        results.push({ ...base, skillId: base.skillFile.replace(/\.md$/i, ""), skillName: base.skillFile, modelName: "", enabled: false, capabilities: [], systemPrompt: skillContent, skillContent, error: error instanceof Error ? error.message : String(error) } as any);
       }
     }
-    const representedRoles = new Set(results.map(item => item.harnessRole));
     for (const agent of this.agentRegistry?.listAll() || []) {
-      if (representedRoles.has(agent.role)) continue;
       const deployment = await this.resolveDeployment(agent.id, agent.role);
       results.push({
-        stage: `support:${agent.role}`,
+        stage: `support:${agent.id}`,
         agentKey: deployment?.key || agent.id,
         agentName: agent.name,
         harnessRole: agent.role,
@@ -91,6 +91,7 @@ export class DirectorCapabilityCatalog {
         enabled: Boolean(deployment?.modelName) && !deployment?.disabled,
         source: "harness",
         capabilities: agent.capabilities,
+        systemPrompt: `Harness Agent ${agent.name} (${agent.role})\nCapabilities: ${agent.capabilities.join(", ")}`,
       });
     }
     return results;

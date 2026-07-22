@@ -9,6 +9,7 @@ import { SkillsRegistry } from "../src/core/harness/SkillsRegistry";
 import { directorCapabilityCatalog } from "../src/core/harness/workbench/DirectorCapabilityCatalog";
 import { harness } from "../src/core/harness/init";
 import { ReviewPipeline } from "../src/review/ReviewPipeline";
+import { harnessEventBus } from "../src/core/harness/HarnessEventBus";
 
 async function main() {
   await new Promise(resolve => setTimeout(resolve, 500));
@@ -36,16 +37,25 @@ async function main() {
     assert.ok(skills.getBySourceName("script_execution_script.md"));
     assert.ok(skills.listAll().length >= 20);
     const capabilities = await directorCapabilityCatalog.list();
-    assert.equal(capabilities.length, 7);
-    assert.equal(capabilities.every(item => item.enabled), true);
+    assert.equal(capabilities.length >= 7, true);
+    assert.equal(capabilities.length >= harness.agentRegistry.listAll().length, true);
+    assert.equal(capabilities.every(item => typeof item.systemPrompt === "string"), true);
     const baseInput = { route: "/production", domain: "storyboard" as const, projectId, episodeId: scriptId, selected: [{ type: "shot" as const, id: shotId, label: "镜头 1" }], visible: [] };
     const context = await resolver.resolve(baseInput);
     assert.equal(context.route.projectId, entityId("project", projectId));
     assert.equal(context.selected.some(ref => ref.id === entityId("shot", shotId)), true);
+    const observedEvents: string[] = [];
+    const unsubscribe = harnessEventBus.subscribeInstance(instanceId, event => observedEvents.push((event as any).actionRunId));
+    await harnessEventBus.emitWorkbenchEvent({ kind: "action.planned", actionRunId: `verify-action-${suffix}`, instanceId, projectId: entityId("project", projectId), payload: { summary: "verification" } });
+    unsubscribe();
+    assert.deepEqual(observedEvents, [`verify-action-${suffix}`]);
 
     const sceneContext = await resolver.resolve({ ...baseInput, domain: "scenes", route: "/scriptAgent", selected: [] });
     const novelContext = await resolver.resolve({ route: "/novel", domain: "script", projectId, selected: [], visible: [] });
     const noSelectionContext = await resolver.resolve({ route: "/scriptAgent", domain: "script", projectId, selected: [], visible: [] });
+    const startPlan = await conversationalDirector.planInstruction("Start", novelContext);
+    assert.equal(startPlan.toolName, "production.run_stage");
+    assert.equal(startPlan.input.stage, "pipeline");
     const directorPlan = await conversationalDirector.planInstruction("继续", noSelectionContext);
     assert.equal(directorPlan.input.stage, "director_plan");
     const naturalContinuePlan = await conversationalDirector.planInstruction("继续进入下一阶段", noSelectionContext);

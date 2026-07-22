@@ -5,6 +5,7 @@ import Ai from "@/utils/ai";
 import { v4 as uuid } from "uuid";
 import { db } from "@/utils/db";
 import { ComfyUIClient, WorkflowParser, ComfyUIResultHandler } from "@/comfyui";
+import { resourceAwareScheduler } from "@/comfyui/ResourceAwareScheduler";
 import path from "path";
 import u from "@/utils";
 import { ArtisticReviewer } from "@/review/ArtisticReviewer";
@@ -104,11 +105,20 @@ export abstract class FilmAgent extends BaseAgent {
   private async ensureComfyClient(): Promise<ComfyUIClient | null> {
     if (this.comfyClient) return this.comfyClient;
     try {
-      const server = await db("o_comfyui_server").where("enabled", 1).first();
-      if (!server) { console.warn("[FilmAgent] No enabled ComfyUI server found"); return null; }
-      this.comfyClient = new ComfyUIClient({ baseUrl: server.baseUrl, wsUrl: server.wsUrl });
-      this.comfyHandler = new ComfyUIResultHandler(this.comfyClient);
-      return this.comfyClient;
+      const servers = await db("o_comfyui_server").where("enabled", 1).orderBy("id", "asc");
+      for (const server of servers) {
+        try {
+          const client = new ComfyUIClient({ baseUrl: server.baseUrl, wsUrl: server.wsUrl });
+          await client.getSystemStats();
+          this.comfyClient = client;
+          this.comfyHandler = new ComfyUIResultHandler(client);
+          return client;
+        } catch (err) {
+          console.warn(`[FilmAgent] ComfyUI server ${server.baseUrl} unavailable:`, err instanceof Error ? err.message : err);
+        }
+      }
+      console.warn("[FilmAgent] No healthy enabled ComfyUI server found");
+      return null;
     } catch (err) {
       console.warn("[FilmAgent] Failed to create ComfyUI client:", err);
       return null;
@@ -125,7 +135,16 @@ export abstract class FilmAgent extends BaseAgent {
     if (workflowId) {
       workflow = await db("o_comfyui_workflow").where("id", workflowId).first();
     } else {
-      workflow = await db("o_comfyui_workflow").where("type", outputType).first();
+      const candidates = await db("o_comfyui_workflow")
+        .whereIn("type", [outputType, "both"])
+        .orderBy("updateTime", "desc");
+      const terms = outputType === "video"
+        ? ["video", "animate", "motion"]
+        : ["txt2img", "text", "image", "img2img", "controlnet", "ipadapter"];
+      workflow = candidates.sort((left: any, right: any) => {
+        const score = (row: any) => terms.reduce((total, term) => total + (term && `${row.name || ""} ${row.description || ""}`.toLowerCase().includes(term) ? 1 : 0), 0);
+        return score(right) - score(left);
+      })[0];
     }
     if (!workflow) throw new Error(`No ComfyUI workflow found for type: ${outputType}`);
 
@@ -139,25 +158,33 @@ export abstract class FilmAgent extends BaseAgent {
       }
     }
     const injected = parser.injectParameters(wf, promptParams);
-    const promptId = await client.queuePrompt(injected as any);
-    console.log(`[FilmAgent] ComfyUI prompt submitted: ${promptId}`);
-    const history = await client.waitForCompletion(promptId);
-    const assets = this.comfyHandler.extractOutputs(history);
-    if (assets.length === 0) throw new Error("ComfyUI produced no output");
-    const ossDir = u.getPath("oss");
-    const targetDir = path.join(ossDir, "production", String(this.ctx.projectId));
-    const localPaths = await this.comfyHandler.downloadAssets(assets, targetDir);
-    return `production/${this.ctx.projectId}/${path.basename(localPaths[0])}`;
+    return resourceAwareScheduler.run(client, async () => {
+      const promptId = await client.queuePrompt(injected as any);
+      console.log(`[FilmAgent] ComfyUI prompt submitted: ${promptId}`);
+      const history = await client.waitForCompletion(promptId);
+      const assets = this.comfyHandler!.extractOutputs(history);
+      if (assets.length === 0) throw new Error("ComfyUI produced no output");
+      const ossDir = u.getPath("oss");
+      const targetDir = path.join(ossDir, "production", String(this.ctx.projectId));
+      const localPaths = await this.comfyHandler!.downloadAssets(assets, targetDir);
+      return `production/${this.ctx.projectId}/${path.basename(localPaths[0])}`;
+    });
   }
 
   // ── 后端选择 ────────────────────────────────────
   protected async selectBackend(): Promise<"api" | "comfyui"> {
     try {
-      const hasServer = await db("o_comfyui_server").where("enabled", 1).first();
-      if (!hasServer) return "api";
-      const client = new ComfyUIClient({ baseUrl: hasServer.baseUrl });
-      await client.getSystemStats();
-      return "comfyui";
+      const servers = await db("o_comfyui_server").where("enabled", 1).orderBy("id", "asc");
+      for (const server of servers) {
+        try {
+          const client = new ComfyUIClient({ baseUrl: server.baseUrl, wsUrl: server.wsUrl });
+          await client.getSystemStats();
+          return "comfyui";
+        } catch (err) {
+          console.warn(`[FilmAgent] ComfyUI backend probe failed for ${server.baseUrl}:`, err instanceof Error ? err.message : err);
+        }
+      }
+      return "api";
     } catch {
       return "api";
     }

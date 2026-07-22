@@ -190,12 +190,18 @@ const pagination = ref({
   total: 0,
 });
 
+function refreshFromHarness(event: Event) {
+  const patch = (event as CustomEvent).detail;
+  if (patch?.domain === "script") void getNovel();
+}
 onMounted(() => {
   getNovel();
+  window.addEventListener("harness:ui-patch", refreshFromHarness);
 });
 
 onUnmounted(() => {
   stopPolling();
+  window.removeEventListener("harness:ui-patch", refreshFromHarness);
 });
 function onChange() {
   pagination.value.page = 1;
@@ -244,7 +250,7 @@ function startHarnessFlow() {
     body: "将使用当前项目的小说内容，通过 Harness 引擎自动完成剧本、分镜、生图、剪辑、成片流程。",
     onConfirm: async () => {
       try {
-        const res = await axios.post("/harness/startFromNovel/", {
+        const res = await axios.post("/harness/workflow/start-from-novel", {
           projectId: project.value?.id,
           workflowTemplate: "short-drama-production",
         });

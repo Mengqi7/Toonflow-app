@@ -12,6 +12,10 @@ export class DPAgent extends FilmAgent {
 
   getSystemPrompt(): string {
     const rules = this.rules?.getRulesForAgent("dp") || "";
+    const skillPrompt = this.skills?.listAll()
+      .filter(skill => skill.sourcePath?.replace(/\\/g, "/").includes("/dp/"))
+      .map(skill => `## Skill: ${skill.name}\n${skill.content}`)
+      .join("\n\n") || "";
     return `你是摄影指导 (DP)。接收 ShotItem, 生成专业画面构图方案并调用生图后端。
 
 ## 工作流
@@ -29,13 +33,15 @@ export class DPAgent extends FilmAgent {
 ## 禁止 mock
 失败时抛 AgentExecutionError, 由监制 Agent 决策重试或升级用户。
 
-${rules}`;
+${rules}
+
+${skillPrompt}`;
   }
 
   getTools(): ToolDefinition[] { return []; }
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
-    const { shot, style, retryInstruction } = ctx.input;
+    const { shot, style, workflowId, retryInstruction } = ctx.input;
     const shotDesc = typeof shot === "string" ? shot : (shot?.description || JSON.stringify(shot));
     const retryHint = retryInstruction?.suggestions?.join("; ") || "";
 
@@ -44,7 +50,7 @@ ${rules}`;
 
     try {
       // 1. 选择后端
-      const backend = await this.chooseBackend(shot, style);
+      const backend = workflowId ? "comfyui" : await this.chooseBackend(shot, style);
 
       // 2. 生成构图 prompt
       const charDesc = characterRefs.length > 0
@@ -59,7 +65,7 @@ ${rules}`;
       );
 
       // 3. 生成图片
-      const imageUrls = await this.generateImage(promptText, { backend, count: 1 });
+      const imageUrls = await this.generateImage(promptText, { backend, workflowId, count: 1 });
       const shotId = typeof shot === "object" ? shot?.id : `shot_${Date.now()}`;
 
       return {

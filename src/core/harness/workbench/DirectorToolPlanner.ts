@@ -120,6 +120,12 @@ export class DirectorToolPlanner {
   }
 
   private resolveProductionStage(message: string, context: ProjectContext): "skeleton" | "adaptation" | "development" | "screenplay" | "assets" | "director_plan" | "storyboard" | "video" | "pipeline" | undefined {
+    if (/^\s*(?:start|begin|start production|begin production)\s*[.!?]*$/i.test(message)) {
+      return context.productionState.hasNovel ? "pipeline" : context.productionState.nextStage === "complete" ? undefined : context.productionState.nextStage;
+    }
+    if (/^\s*(?:continue|next|proceed)\s*[.!?]*$/i.test(message)) {
+      return context.productionState.nextStage === "complete" ? undefined : context.productionState.nextStage;
+    }
     if (/(完整流程|从小说到(?:电影|视频|成片)|从小说开始|启动.*制片|开始.*制片|一键.*制作|start.*production|novel.*(movie|video|production))/i.test(message)) return "pipeline";
     if (/(故事骨架|剧情骨架|故事大纲|剧情大纲).{0,8}(生成|创作|分析|重做|开始)|(?:生成|创作|分析|重做|开始).{0,8}(故事骨架|剧情骨架|故事大纲|剧情大纲)/i.test(message)) return "skeleton";
     if (/(改编策略|改编方案).{0,8}(生成|创作|分析|重做|开始)|(?:生成|创作|分析|重做|开始).{0,8}(改编策略|改编方案)/i.test(message)) return "adaptation";

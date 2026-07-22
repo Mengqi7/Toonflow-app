@@ -32,10 +32,16 @@
       <section v-if="showCapabilities" class="capability-panel">
         <header><strong>Director 能力</strong><span>{{ enabledCapabilities.length }}/{{ capabilities.length }} 可用</span></header>
         <div class="capability-list">
-          <div v-for="item in capabilities" :key="item.stage" class="capability-item" :class="{ disabled: !item.enabled }">
+          <details v-for="item in capabilities" :key="item.stage" class="capability-item" :class="{ disabled: !item.enabled }">
             <span class="capability-state"></span>
             <div><strong>{{ item.agentName }}</strong><span>{{ item.skillName }}</span><code>{{ item.modelName || "未配置模型" }}</code></div>
-          </div>
+            <div class="capability-detail">
+              <span>Role: {{ item.harnessRole }}</span>
+              <span>Source: {{ item.source }}</span>
+              <span>Capabilities: {{ item.capabilities.join(", ") || "none" }}</span>
+              <pre>{{ item.systemPrompt || item.skillContent || "No configured prompt" }}</pre>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -143,6 +149,10 @@ const draft = ref("");
 const messageList = ref<HTMLElement>();
 const showCapabilities = ref(false);
 const capabilities = ref<DirectorCapability[]>([]);
+const isResizing = ref(false);
+const dockWidth = ref(Number(localStorage.getItem("toonflow.directorDockWidth")) || 390);
+const autoPilot = ref(localStorage.getItem("toonflow.directorAutoPilot") === "true");
+const liveEvents = ref<Record<string, Array<{ id: string; level: "info" | "success" | "error"; time: string; title: string; detail: string }>>>({});
 let eventSource: EventSource | null = null;
 let projectLoadVersion = 0;
 
@@ -152,6 +162,11 @@ interface DirectorCapability {
   skillName: string;
   modelName: string;
   enabled: boolean;
+  harnessRole: string;
+  source: string;
+  capabilities: string[];
+  systemPrompt?: string;
+  skillContent?: string;
 }
 
 const domainLabels: Record<string, string> = {
@@ -173,6 +188,9 @@ const apiBaseUrl = computed(() => {
   return /\/api$/.test(raw) ? raw : `${raw}/api`;
 });
 const enabledCapabilities = computed(() => capabilities.value.filter(item => item.enabled));
+const dockStyle = computed(() => ({ width: `${isOpen.value ? dockWidth.value : 48}px`, minWidth: `${isOpen.value ? dockWidth.value : 48}px` }));
+
+watch(autoPilot, value => localStorage.setItem("toonflow.directorAutoPilot", String(value)));
 
 watch(() => props.routePath, path => store.syncRoute(path), { immediate: true });
 watch([() => props.projectId, baseUrl], ([projectId]) => {
@@ -251,6 +269,23 @@ async function execute(message: string, confirmed: boolean, requestId: string) {
   }
 }
 
+function startResize(event: MouseEvent) {
+  isResizing.value = true;
+  const startX = event.clientX;
+  const startWidth = dockWidth.value;
+  const move = (moveEvent: MouseEvent) => {
+    dockWidth.value = Math.max(320, Math.min(680, startWidth - (moveEvent.clientX - startX)));
+  };
+  const stop = () => {
+    isResizing.value = false;
+    localStorage.setItem("toonflow.directorDockWidth", String(dockWidth.value));
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", stop);
+  };
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", stop);
+}
+
 function createRequestId(): string {
   return window.crypto?.randomUUID?.() || `director-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -315,6 +350,29 @@ function connectEvents() {
       } catch {}
     });
   }
+  for (const eventName of ["action.planned", "review.requested", "review.completed", "review.approved", "review.rerouted"]) {
+    eventSource.addEventListener(eventName, event => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        addLiveEvent(payload, eventName);
+        if (payload.actionRunId) void refreshActionRun(payload.actionRunId);
+      } catch {}
+    });
+  }
+}
+
+function addLiveEvent(payload: any, kind: string) {
+  const actionRunId = payload.actionRunId;
+  if (!actionRunId) return;
+  const level = /failed|rerouted/.test(kind) ? "error" : /completed|approved/.test(kind) ? "success" : "info";
+  const detail = payload.payload?.message || payload.payload?.reason || payload.payload?.failure?.message || payload.payload?.toolName || kind;
+  const entries = liveEvents.value[actionRunId] || [];
+  if (entries.some(item => item.id === payload.id)) return;
+  liveEvents.value = { ...liveEvents.value, [actionRunId]: [...entries, { id: payload.id, level, time: formatTime(payload.timestamp || Date.now()), title: kind, detail: String(detail) }] };
+}
+
+function liveEventsFor(run: HarnessActionRun) {
+  return liveEvents.value[run.id] || [];
 }
 
 async function refreshActionRun(actionRunId: string) {
@@ -489,6 +547,10 @@ onBeforeUnmount(() => eventSource?.close());
 }
 .capability-list { max-height: 194px; padding: 0 8px 8px; overflow-y: auto; display: grid; gap: 4px; }
 .capability-item { min-height: 42px; padding: 5px 7px; display: flex; gap: 7px; align-items: flex-start; border: 1px solid #edf0f2; border-radius: 4px; }
+.capability-item summary { display: flex; gap: 7px; align-items: flex-start; cursor: pointer; list-style: none; }
+.capability-item summary::-webkit-details-marker { display: none; }
+.capability-detail { display: grid; gap: 4px; margin: 7px 0 2px 14px; color: #5a6475; font-size: 10px; }
+.capability-detail pre { max-height: 110px; margin: 3px 0 0; padding: 6px; overflow: auto; white-space: pre-wrap; background: #f7f8fa; font: inherit; }
 .capability-item > div { min-width: 0; display: grid; grid-template-columns: 1fr auto; gap: 1px 6px; flex: 1; }
 .capability-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .capability-item span, .capability-item code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6b7280; font-size: 9px; }

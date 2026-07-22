@@ -1,5 +1,8 @@
 import { FilmAgent } from "@/agents/FilmAgent";
 import type { AgentDescriptor, AgentContext, AgentResult, ToolDefinition, ReviewScore, RetryInstruction } from "@/core/harness/types";
+import type { MemoryBus } from "@/core/harness/MemoryBus";
+import type { ReviewPipeline } from "@/review/ReviewPipeline";
+import { db } from "@/utils/db";
 
 /** 监制 Agent — 审核所有工种产出, 决定通过/打回/升级用户 */
 export class SupervisorAgent extends FilmAgent {
@@ -30,6 +33,30 @@ export class SupervisorAgent extends FilmAgent {
   }
 
   getTools(): ToolDefinition[] { return []; }
+
+  async learnFromHistory(memory: MemoryBus, agentIds: string[], pipeline?: ReviewPipeline): Promise<void> {
+    const entries = await memory.get({ namespaces: ["review"], type: "event", limit: 100 });
+    for (const agentId of agentIds) {
+      const samples = entries
+        .map(entry => typeof entry.value === "string" ? this.parseHistory(entry.value) : entry.value)
+        .filter((value: any) => value?.agentId === agentId);
+      if (samples.length < 5) continue;
+      const scores = samples.map((value: any) => Number(value.scores?.overall)).filter(Number.isFinite);
+      const failures = samples.filter((value: any) => value.passed === false).length;
+      const failureRate = failures / samples.length;
+      const averageScore = scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : 0;
+      if (pipeline && failureRate > 0.5) pipeline.setWeights({ dimensions: { technical: 0.3, artistic: 0.45, contentMatch: 0.25 } });
+      if (await db.schema.hasTable("o_review_preference")) {
+        await db("o_review_preference").insert({
+          agentId,
+          weights: JSON.stringify({ failureRate, averageScore }),
+          thresholds: JSON.stringify({ pass: Math.max(0.6, Math.min(0.9, averageScore - (failureRate > 0.4 ? 0.05 : 0))) }),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+    }
+  }
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { agentId, agentOutput, reviewScore, reference } = ctx.input;
@@ -65,6 +92,10 @@ export class SupervisorAgent extends FilmAgent {
         },
       };
     }
+  }
+
+  private parseHistory(value: string): any {
+    try { return JSON.parse(value); } catch { return {}; }
   }
 }
 export const descriptor: AgentDescriptor = new SupervisorAgent().descriptor;

@@ -145,6 +145,7 @@
                 <p>{{ item.meta }}</p>
               </article>
             </div>
+            <StageScriptEditor :project-id="project?.id" />
           </div>
 
           <div v-else-if="activeScene === 'art'" class="scene art-scene">
@@ -253,6 +254,7 @@
                 </div>
               </aside>
             </div>
+            <StageShotImageGrid :items="shots.map(shot => ({ id: shot.id, status: shot.label }))" />
           </div>
 
           <div v-else-if="activeScene === 'video'" class="scene video-scene">
@@ -480,19 +482,19 @@
         <div class="monitor-grid">
           <article>
             <span>总进度</span>
-            <strong>66%</strong>
+            <strong>{{ liveProgress }}</strong>
           </article>
           <article>
             <span>循环次数</span>
-            <strong>3</strong>
+            <strong>{{ liveRetryCount }}</strong>
           </article>
           <article>
             <span>活动工位</span>
-            <strong>7</strong>
+            <strong>{{ liveActiveCount }}</strong>
           </article>
           <article>
             <span>异常</span>
-            <strong>1</strong>
+            <strong>{{ liveErrorCount }}</strong>
           </article>
         </div>
         <section class="gate-card">
@@ -512,6 +514,26 @@
             </div>
           </div>
         </section>
+        <section class="warehouse-section">
+          <div class="warehouse-head">
+            <h3>Artifact Warehouse</h3>
+            <select v-model="warehouseFilter" aria-label="artifact type">
+              <option value="">All types</option>
+              <option value="script">Script</option>
+              <option value="image">Image</option>
+              <option value="video">Video</option>
+              <option value="review">Review</option>
+            </select>
+          </div>
+          <div v-if="warehouseItems.length" class="warehouse-list">
+            <article v-for="item in warehouseItems.slice(0, 8)" :key="`${item.artifactType}-${item.artifactKey}-${item.version}`" class="warehouse-item">
+              <strong>{{ item.artifactKey }}</strong>
+              <span>v{{ item.version }} · {{ item.artifactType }} · {{ item.source || "harness" }}</span>
+              <b :class="item.reviewScore ? 'pass' : 'wait'">{{ item.reviewScore || "Pending review" }}</b>
+            </article>
+          </div>
+          <p v-else class="warehouse-empty">No persisted artifact versions for this instance</p>
+        </section>
       </aside>
     </main>
   </div>
@@ -522,6 +544,8 @@ import axios from "@/utils/axios";
 import { useHarnessEventStream, type HarnessEvent } from "@/composables/useHarnessEventStream";
 import projectStore from "@/stores/project";
 import { computed, onMounted, ref, watch } from "vue";
+import StageScriptEditor from "./script/components/StageScriptEditor.vue";
+import StageShotImageGrid from "./cornerScape/components/StageShotImageGrid.vue";
 
 type StationStatus = "run" | "pass" | "review" | "return" | "wait";
 type HarnessScene = "station" | "script" | "art" | "storyboard" | "video" | "post" | "loop" | "review" | "settings" | "trace";
@@ -1254,6 +1278,17 @@ const traces = [
 
 const { events, connected, connect, pushLocalEvent } = useHarnessEventStream(instanceId);
 const directorCommand = ref("");
+const liveStatus = ref<any>(null);
+const liveTaskGraph = ref<any>(null);
+const warehouseItems = ref<any[]>([]);
+const warehouseFilter = ref("");
+const liveProgress = computed(() => {
+  const stats = liveStatus.value?.stats;
+  return stats?.total ? `${Math.round((stats.completed / stats.total) * 100)}%` : "66%";
+});
+const liveRetryCount = computed(() => liveStatus.value?.stats?.retried ?? 3);
+const liveActiveCount = computed(() => liveStatus.value?.stats?.running ?? 7);
+const liveErrorCount = computed(() => liveStatus.value?.stats?.failed ?? 1);
 
 const selectedStation = computed(() => stations.value.find((station) => station.id === selectedStationId.value) ?? stations.value[0]);
 const selectedVideoClip = computed(() => videoClips[0]);
@@ -1293,7 +1328,10 @@ watch(events, (items) => {
     const station = stations.value.find((item) => item.id === targetStationId);
     if (station) station.status = "return";
   }
+  void loadLiveControlRoom();
 });
+
+watch(warehouseFilter, () => { void loadWarehouse(); });
 
 onMounted(() => {
   const requestedScene = route.query.scene;
@@ -1301,7 +1339,41 @@ onMounted(() => {
     activeScene.value = requestedScene as HarnessScene;
   }
   connect();
+  void loadLiveControlRoom();
+  void loadWarehouse();
 });
+
+async function loadLiveControlRoom() {
+  if (instanceId.value === "demo") return;
+  try {
+    const [statusResponse, graphResponse] = await Promise.all([
+      axios.get(`/api/harness/control/${instanceId.value}/status`),
+      axios.get(`/api/harness/control/${instanceId.value}/task-graph`),
+    ]);
+    liveStatus.value = statusResponse.data?.data || null;
+    liveTaskGraph.value = graphResponse.data?.data || null;
+    const taskList = liveTaskGraph.value?.tasks || [];
+    for (const task of taskList) {
+      const stationId = stationIdFromAgent(task.node?.agentRole);
+      const station = stations.value.find(item => item.id === stationId);
+      if (station) station.status = task.state === "completed" ? "pass" : task.state === "failed" ? "return" : task.state === "running" ? "run" : "wait";
+    }
+  } catch {
+    // The demo route remains usable when no live instance exists.
+  }
+}
+
+async function loadWarehouse() {
+  if (instanceId.value === "demo" || !project.value?.id) return;
+  try {
+    const response = await axios.get(`/api/harness/control/${instanceId.value}/warehouse`, {
+      params: { projectId: project.value.id, artifactType: warehouseFilter.value || undefined },
+    });
+    warehouseItems.value = response.data?.data || [];
+  } catch {
+    warehouseItems.value = [];
+  }
+}
 
 function statusLabel(status: StationStatus | string) {
   return {
@@ -2773,6 +2845,71 @@ button {
     color: var(--muted);
     line-height: 1.55;
   }
+}
+
+.warehouse-section {
+  min-height: 0;
+}
+
+.warehouse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+
+  select {
+    min-width: 96px;
+    border: 1px solid rgba(97, 219, 255, 0.28);
+    border-radius: 6px;
+    padding: 4px 6px;
+    color: var(--text);
+    background: rgba(8, 23, 36, 0.86);
+  }
+}
+
+.warehouse-list {
+  display: grid;
+  gap: 6px;
+}
+
+.warehouse-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  padding: 8px;
+  border: 1px solid rgba(97, 219, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(9, 26, 40, 0.5);
+
+  strong,
+  span,
+  b {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  span {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  b {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+    align-self: center;
+    font-size: 11px;
+
+    &.pass { color: var(--green); }
+    &.wait { color: var(--muted); }
+  }
+}
+
+.warehouse-empty {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 @media (max-width: 1280px) {

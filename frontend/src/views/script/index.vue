@@ -146,7 +146,14 @@ async function searchScripts() {
     window.$message.error($t("workbench.script.msg.searchFailed"));
   }
 }
-onMounted(searchScripts);
+function refreshFromHarness(event: Event) {
+  const patch = (event as CustomEvent).detail;
+  if (["script", "scenes", "assets"].includes(patch?.domain)) void searchScripts();
+}
+onMounted(() => {
+  searchScripts();
+  window.addEventListener("harness:ui-patch", refreshFromHarness);
+});
 // 搜索输入变化
 function onChange() {
   searchScripts();
@@ -330,6 +337,7 @@ watch(
 );
 onUnmounted(() => {
   stopPolling();
+  window.removeEventListener("harness:ui-patch", refreshFromHarness);
 });
 </script>
 

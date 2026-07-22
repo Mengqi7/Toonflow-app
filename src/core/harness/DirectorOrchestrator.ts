@@ -6,7 +6,7 @@
  */
 import { v4 as uuid } from "uuid";
 import { db } from "@/utils/db";
-import type { TaskNode, WorkflowInstance, AgentContext, AgentResult } from "./types";
+import type { TaskNode, WorkflowInstance, AgentResult } from "./types";
 import { TaskGraph } from "./TaskGraph";
 import { harnessEventBus } from "./HarnessEventBus";
 import { callbackBridge } from "./CallbackBridge";
@@ -41,6 +41,8 @@ export class DirectorOrchestrator {
   private workflowRunner: WorkflowRunner;
   private planner: DirectorLLMPlanner;
   private graphs = new Map<string, TaskGraph>();  // instanceId → TaskGraph
+  private instanceProjects = new Map<string, number>();
+  private pendingRuns = new Map<string, { projectId: number; novel: string; config: Record<string, any> }>();
   private userMessages = new Map<string, Array<{ role: "user" | "director"; content: string; timestamp: number }>>();
 
   constructor(deps: {
@@ -84,6 +86,8 @@ export class DirectorOrchestrator {
     const instanceId = `harness-${uuid()}`;
     const graph = new TaskGraph(instanceId);
     this.graphs.set(instanceId, graph);
+    this.instanceProjects.set(instanceId, projectId);
+    this.pendingRuns.delete(instanceId);
     this.userMessages.set(instanceId, []);
 
     // 4. 记录初始消息
@@ -121,6 +125,9 @@ export class DirectorOrchestrator {
     novel: string,
     config: Record<string, any>,
   ): Promise<void> {
+    if (config.dynamicPlanning !== false) {
+      return this.runDynamicDispatchLoop(instanceId, projectId, novel, config);
+    }
     const graph = this.graphs.get(instanceId)!;
 
     // 阶段 1: 编剧
@@ -221,7 +228,20 @@ export class DirectorOrchestrator {
     const startTime = Date.now();
     try {
       // 构造 AgentContext
-      const agentCtx: AgentContext = {
+      const upstream = graph.getAllTasks()
+        .filter(runtime => runtime.state === "completed")
+        .reduce((data, runtime) => ({ ...data, ...(runtime.output || {}) }), {} as Record<string, any>);
+      const taskWithContext: TaskNode = {
+        ...task,
+        static: { ...upstream, ...(task.static || {}) },
+      };
+      const result = await this.workflowRunner.enqueueTask(taskWithContext, {
+        instanceId,
+        projectId,
+        config,
+      });
+      if (!result.success) throw new Error(String(result.data?.error || `Task ${task.id} failed`));
+      /*
         instanceId: `${instanceId}:${task.id}`,
         nodeId: task.id,
         projectId,
@@ -238,6 +258,7 @@ export class DirectorOrchestrator {
       await agent.init(agentCtx);
       const result = await agent.execute(agentCtx);
       await agent.cleanup(agentCtx);
+      */
 
       // 持久化产物
       if (result.success && result.data) {
@@ -311,6 +332,84 @@ export class DirectorOrchestrator {
     }
 
     return { reply };
+  }
+
+  async handleUserInput(instanceId: string, choice: string): Promise<{ resumed: boolean; message: string }> {
+    const pending = this.pendingRuns.get(instanceId);
+    if (!pending) return { resumed: false, message: "当前没有等待确认的动态任务" };
+    const approved = /approve|pass|continue|通过|继续|确认/i.test(choice);
+    if (!approved) {
+      this.addMessage(instanceId, "director", `已记录人工决定：${choice}。等待新的导演指令。`);
+      return { resumed: false, message: "已保留当前任务图，等待新的导演指令" };
+    }
+    this.pendingRuns.delete(instanceId);
+    this.addMessage(instanceId, "director", "确认已收到，继续推进下一阶段。");
+    void this.runDynamicDispatchLoop(instanceId, pending.projectId, pending.novel, pending.config).catch(error => {
+      console.error(`[DirectorOrchestrator] Resumed dispatch failed for ${instanceId}:`, error);
+    });
+    return { resumed: true, message: "确认已收到，动态任务图已恢复" };
+  }
+
+  async enqueueHarnessFromExistingProject(projectId: number): Promise<{ instanceId: string; message: string }> {
+    return this.startFromNovel({ projectId });
+  }
+
+  /** LLM-led dispatch loop. YAML/static sequencing remains an explicit fallback. */
+  private async runDynamicDispatchLoop(
+    instanceId: string,
+    projectId: number,
+    novel: string,
+    config: Record<string, any>,
+  ): Promise<void> {
+    const maxTasks = Number(config.maxDynamicTasks || 64);
+    for (let i = 0; i < maxTasks; i++) {
+      const decision = await this.planner.planNextStep(this.buildPlannerState(instanceId, novel.length));
+      if (decision.message) {
+        this.addMessage(instanceId, "director", decision.message);
+        await harnessEventBus.emitEvent({ kind: "director.message", instanceId, content: decision.message, timestamp: Date.now() } as any);
+      }
+      if (decision.action === "complete") {
+        await harnessEventBus.emitEvent({ kind: "harness.completed", instanceId, summary: "动态任务图已完成", timestamp: Date.now() } as any);
+        return;
+      }
+      if (decision.action === "ask_user" || decision.action === "wait" || !decision.nextTask) {
+        this.pendingRuns.set(instanceId, { projectId, novel, config });
+        await harnessEventBus.emitEvent({
+          kind: "director.user_input_required",
+          instanceId,
+          prompt: decision.userPrompt || decision.message || "请确认下一步制作任务",
+          options: decision.userOptions,
+          timestamp: Date.now(),
+        } as any);
+        return;
+      }
+
+      const task: TaskNode = {
+        ...decision.nextTask,
+        id: decision.nextTask.id || `dynamic-${uuid()}`,
+        bindings: decision.nextTask.bindings || {},
+        static: {
+          ...(decision.nextTask.static || {}),
+          ...(decision.nextTask.agentRole === "screenwriter" ? { novel } : {}),
+        },
+        timeoutMs: decision.nextTask.timeoutMs || 300000,
+      };
+      await this.dispatchAndAwait(instanceId, projectId, task, config);
+
+      if (config.requireConfirmations && ["screenwriter", "assistant_director", "editor"].includes(task.agentRole)) {
+        this.pendingRuns.set(instanceId, { projectId, novel, config });
+        await harnessEventBus.emitEvent({
+          kind: "director.user_input_required",
+          instanceId,
+          taskId: task.id,
+          prompt: `${task.agentRole} 阶段已完成，请确认是否继续`,
+          options: ["通过并继续", "需要修改"],
+          timestamp: Date.now(),
+        } as any);
+        return;
+      }
+    }
+    throw new Error(`Dynamic dispatch exceeded ${maxTasks} tasks`);
   }
 
   async handleWorkbenchInstruction(
@@ -394,6 +493,8 @@ export class DirectorOrchestrator {
 
   /** 从实例获取 projectId */
   private async getProjectId(instanceId: string): Promise<number | null> {
+    const knownProjectId = this.instanceProjects.get(instanceId);
+    if (knownProjectId) return knownProjectId;
     try {
       const state = await this.workflowRunner.loadInstanceState(instanceId);
       return state?.context?.projectId || null;

@@ -4,7 +4,8 @@
   "description": "AI-powered ComfyUI workflow generation and optimization agent",
   "type": "module",
   "scripts": {
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "mcp": "tsx src/mcp-server.ts"
   },
   "dependencies": {
     "zod": "^4.0.0",

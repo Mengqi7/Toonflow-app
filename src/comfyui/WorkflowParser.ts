@@ -200,6 +200,21 @@ export class WorkflowParser {
     return { valid: errors.length === 0, errors };
   }
 
+  getModelReferences(wf: WorkflowJSON): Array<{ nodeId: number; nodeType: string; value: string }> {
+    const loaderTypes = /Loader|Checkpoint|ControlNet|Upscale|VAE|CLIP/i;
+    const refs: Array<{ nodeId: number; nodeType: string; value: string }> = [];
+    for (const node of wf.nodes || []) {
+      if (!loaderTypes.test(node.type || "")) continue;
+      for (const value of node.widgets_values || []) {
+        if (typeof value === "string" && value.trim() && !value.includes("{{")) refs.push({ nodeId: node.id, nodeType: node.type, value });
+      }
+      for (const [key, value] of Object.entries(node.inputs || {})) {
+        if (/model|ckpt|checkpoint|vae|clip/i.test(key) && typeof value === "string") refs.push({ nodeId: node.id, nodeType: node.type, value });
+      }
+    }
+    return refs;
+  }
+
   getInputNodes(wf: WorkflowJSON): ComfyUINode[] {
     return (wf.nodes || []).filter(n =>
       ["LoadImage", "LoadCheckpoint", "CheckpointLoaderSimple"].some(t => n.type?.includes(t)),

@@ -3,7 +3,7 @@ import { EventEmitter } from "events";
 import type {
   WorkflowDefinition, WorkflowInstance, WorkflowContext, WorkflowResult,
   WorkflowNode, WorkflowEdge, NodeState, NodeResult, AgentResult, RetryInstruction,
-  AgentContext
+  AgentContext, TaskNode
 } from "./types";
 import type { AgentRegistry } from "./AgentRegistry";
 import type { MemoryBus } from "./MemoryBus";
@@ -43,6 +43,59 @@ export class WorkflowRunner extends EventEmitter {
   }
 
   getDefinitions(): Map<string, WorkflowDefinition> { return this.definitions; }
+
+  /**
+   * V2 execution boundary: DirectorOrchestrator owns sequencing; this method
+   * executes exactly one task and returns its structured AgentResult.
+   */
+  async enqueueTask(task: TaskNode, options: {
+    instanceId: string;
+    projectId: number;
+    userId?: number;
+    config?: Record<string, any>;
+  }): Promise<AgentResult> {
+    if (!this.agentRegistry || !this.memoryBus || !this.rulesEngine || !this.skillsRegistry || !this.mcpConnector) {
+      throw new Error("WorkflowRunner dependencies are not initialized");
+    }
+    const definitionId = `dynamic:${options.instanceId}:${task.id}`;
+    const node: WorkflowNode = {
+      id: task.id,
+      type: "agent",
+      agentRole: task.agentRole,
+      input: { bindings: {}, static: { ...(task.static || {}), ...(task.bindings || {}) } },
+      output: { keys: ["result"] },
+      config: {
+        timeoutMs: task.timeoutMs || 300000,
+        retry: {
+          maxRetries: Math.min(task.retry?.maxRetries ?? 2, 2),
+          backoffMs: task.retry?.backoffMs ?? 500,
+          backoffMultiplier: 2,
+          retryableErrors: [],
+        },
+        criticalNode: task.criticalNode,
+      },
+    };
+    await this.registerWorkflow({ id: definitionId, version: "dynamic", nodes: [node], edges: [] });
+    const instance: WorkflowInstance = {
+      id: `${options.instanceId}:${task.id}`,
+      definitionId,
+      status: "pending",
+      nodeStates: new Map([[task.id, "pending"]]),
+      context: {
+        data: new Map(),
+        projectId: options.projectId,
+        userId: options.userId || 0,
+        config: options.config || {},
+      },
+      startedAt: Date.now(),
+    };
+    const result = await this.execute(instance);
+    const output = instance.context.data.get(task.id);
+    if (result.status === "failed" || instance.nodeStates.get(task.id) === "failed") {
+      return { success: false, data: { error: `Task ${task.id} failed`, result }, metrics: result.metrics };
+    }
+    return { success: true, data: output || {}, metrics: result.metrics };
+  }
 
   // ── 注册工作流 ──────────────────────────────────
   async registerWorkflow(def: WorkflowDefinition): Promise<void> {
@@ -148,7 +201,7 @@ export class WorkflowRunner extends EventEmitter {
     // P1-5: 释放预算
     this.releaseRetryBudget(instance.id);
     this.emit("workflow:complete", instance.id, instance.status);
-    return { instanceId: instance.id, status: instance.status };
+    return { instanceId: instance.id, status: instance.status, metrics: (instance.context.config.__metrics || {}) as Record<string, number> };
   }
 
   // ── 执行单个节点 ────────────────────────────────
@@ -188,7 +241,9 @@ export class WorkflowRunner extends EventEmitter {
           };
           const agent = await this.agentRegistry.createInstance(agentRole, agentCtx);
           await agent.init(agentCtx);
+          const startedAt = Date.now();
           const result = await agent.execute(agentCtx);
+          this.recordAgentMetrics(instance, nodeId, Date.now() - startedAt, result.metrics);
           await agent.cleanup(agentCtx);
 
           if (node.config.reviewGate && result.success) {
@@ -285,6 +340,15 @@ export class WorkflowRunner extends EventEmitter {
       console.error(`[WorkflowRunner] Node ${nodeId} failed:`, err?.message || err);
       return { nodeId, state: "failed", error: err };
     }
+  }
+
+  private recordAgentMetrics(instance: WorkflowInstance, nodeId: string, durationMs: number, metrics?: Record<string, number>): void {
+    const current = (instance.context.config.__metrics || {}) as Record<string, number>;
+    current[`${nodeId}.durationMs`] = durationMs;
+    current[`${nodeId}.executions`] = (current[`${nodeId}.executions`] || 0) + 1;
+    for (const [key, value] of Object.entries(metrics || {})) current[`${nodeId}.${key}`] = value;
+    instance.context.config.__metrics = current;
+    this.emit("agent:metrics", instance.id, nodeId, current);
   }
 
   // ── 绑定输入 ─────────────────────────────────────

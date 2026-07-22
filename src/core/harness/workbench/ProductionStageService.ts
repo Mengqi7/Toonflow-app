@@ -650,9 +650,9 @@ export class ProductionStageService {
   private makeDraftAssets(scriptName: string, script: string): AssetDraft {
     const excerpt = script.slice(0, 240);
     return {
-      characters: [{ name: `${scriptName} protagonist`, description: excerpt || "Primary character derived from screenplay.", prompt: `Character reference for ${scriptName}, consistent costume and facial identity` }],
-      props: [{ name: `${scriptName} key prop`, description: "Key story object derived from screenplay.", prompt: `Cinematic prop reference for ${scriptName}` }],
-      locations: [{ name: `${scriptName} main location`, description: "Primary setting derived from screenplay.", prompt: `Location concept reference for ${scriptName}` }],
+      characters: [{ name: `${scriptName} protagonist`, description: excerpt || "Primary character derived from screenplay.", prompt: `Character reference sheet for ${scriptName} protagonist. Preserve facial identity, age, body proportions, hairstyle, costume colors and accessories across every shot. Neutral three-quarter pose, clean separation from background, cinematic key light, production-ready detail.` }],
+      props: [{ name: `${scriptName} key prop`, description: "Key story object derived from screenplay.", prompt: `Production prop reference for ${scriptName}. Show the complete silhouette, materials, scale, wear marks, functional details and hero-side variations. Use controlled studio lighting and a neutral background so the prop remains consistent across storyboard shots.` }],
+      locations: [{ name: `${scriptName} main location`, description: "Primary setting derived from screenplay.", prompt: `Location concept reference for ${scriptName}. Establish geography, entrances, foreground/midground/background layers, time of day, motivated lighting, palette and continuity anchors. Keep camera-readable space for the planned action and repeatable details for future shots.` }],
       delegation: this.draftDelegation("assets"),
     };
   }

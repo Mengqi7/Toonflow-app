@@ -463,6 +463,14 @@ ${skillEntries}
 </available_skills>`;
 }
 
+/** Deprecated compatibility facade. New production work is dispatched by DirectorOrchestrator. */
+export async function execute(ctx: AgentContext): Promise<{ instanceId: string; message: string }> {
+  console.warn("[productionAgent] DEPRECATED, use DirectorOrchestrator with department agents");
+  const { directorOrchestrator } = await import("@/core/harness/DirectorOrchestrator");
+  if (!directorOrchestrator) throw new Error("DirectorOrchestrator is not initialized");
+  return directorOrchestrator.enqueueHarnessFromExistingProject(ctx.resTool.data.projectId);
+}
+
 async function useProductionSkills(artName: string, storyName: string) {
   const artWorkerPath = u.getPath(["skills", "art_skills", artName, "driector_skills"]);
   const storyWorkerPath = u.getPath(["skills", "story_skills", storyName, "driector_skills"]);

@@ -1,4 +1,4 @@
-// @db-hash be0a352d83989dbe44b26e457ed88775
+// @db-hash db9b0a69d26f7c9844e8761d4abb1455
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -103,6 +103,7 @@ export interface o_assets {
   'flowId'?: number | null;
   'id'?: number;
   'imageId'?: number | null;
+  'instanceId'?: string | null;
   'name'?: string | null;
   'projectId'?: number | null;
   'prompt'?: string | null;
@@ -110,10 +111,12 @@ export interface o_assets {
   'promptState'?: string | null;
   'remark'?: string | null;
   'scriptId'?: number | null;
+  'shotId'?: string | null;
   'source'?: string | null;
   'startTime'?: number | null;
   'type'?: string | null;
   'updateTime'?: number | null;
+  'url'?: string | null;
 }
 export interface o_assets2Storyboard {
   'assetId'?: number;
@@ -142,11 +145,14 @@ export interface o_character_library {
   'characterName'?: string | null;
   'createTime'?: number | null;
   'description'?: string | null;
+  'embedding'?: any | null;
   'hairStyle'?: string | null;
   'id'?: number;
+  'instanceId'?: string | null;
   'outfitStyle'?: string | null;
   'projectId'?: number | null;
   'referenceImage'?: string | null;
+  'source'?: string | null;
   'updateTime'?: number | null;
 }
 export interface o_comfyui_server {
@@ -355,8 +361,10 @@ export interface o_script {
   'errorReason'?: string | null;
   'extractState'?: number | null;
   'id'?: number;
+  'instanceId'?: string | null;
   'name'?: string | null;
   'projectId'?: number | null;
+  'sceneNumber'?: string | null;
   'source'?: string | null;
   'updateTime'?: number | null;
 }
@@ -385,21 +393,31 @@ export interface o_skillList {
   'updateTime': number;
 }
 export interface o_storyboard {
+  'angle'?: string | null;
   'cameraMovement'?: string | null;
+  'characters'?: string | null;
   'createTime'?: number | null;
+  'description'?: string | null;
   'duration'?: string | null;
   'filePath'?: string | null;
   'flowId'?: number | null;
   'id'?: number;
+  'imageUrl'?: string | null;
   'index'?: number | null;
+  'instanceId'?: string | null;
   'lockedRefs'?: string | null;
+  'movement'?: string | null;
   'projectId'?: number | null;
   'prompt'?: string | null;
   'reason'?: string | null;
+  'scene'?: string | null;
   'sceneId'?: number | null;
   'scriptId'?: number | null;
+  'shotId'?: string | null;
   'shotSize'?: string | null;
+  'shotType'?: string | null;
   'shouldGenerateImage'?: number | null;
+  'source'?: string | null;
   'state'?: string | null;
   'track'?: string | null;
   'trackId'?: number | null;

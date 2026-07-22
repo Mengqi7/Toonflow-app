@@ -85,4 +85,9 @@ export class ComfyUIClient {
     const data: any = await r.json();
     return { vram_total: data.system?.vram_total || 0, vram_used: data.system?.vram_used || 0, device: data.system?.device || "unknown" };
   }
+
+  async getObjectInfo(): Promise<Record<string, any>> {
+    const r = await fetch(this.baseUrl + "/object_info");
+    return await r.json() as Record<string, any>;
+  }
 }

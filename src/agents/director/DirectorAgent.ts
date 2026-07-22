@@ -2,6 +2,7 @@ import { FilmAgent } from "@/agents/FilmAgent";
 import type { AgentDescriptor, AgentContext, AgentResult, ToolDefinition } from "@/core/harness/types";
 import { StyleInferenceChain } from "./StyleInferenceChain";
 import { ParseError, wrapAsAgentError } from "@/core/harness/errors";
+import { StyleReferenceMatcher } from "./StyleReferenceMatcher";
 
 export interface VisualStyleSpec {
   colorPalette: { primary: string; secondary: string; accent: string; temperature: string; saturation: string };
@@ -27,6 +28,10 @@ export class DirectorAgent extends FilmAgent {
 
   getSystemPrompt(): string {
     const rules = this.rules?.getRulesForAgent("director") || "";
+    const skillPrompt = this.skills?.listAll()
+      .filter(skill => /style|inference|director/i.test(`${skill.id} ${skill.name} ${skill.sourcePath || ""}`))
+      .map(skill => `## Skill: ${skill.name}\n${skill.content}`)
+      .join("\n\n") || "";
     return `你是资深影视导演。分析剧本题材/情绪/时代 → 推断色调/光影/镜头语言。
 
 ## 职责
@@ -37,7 +42,9 @@ export class DirectorAgent extends FilmAgent {
 ## 禁止 default fallback
 失败时抛错, 不返回默认风格或默认分镜。
 
-${rules}`;
+${rules}
+
+${skillPrompt}`;
   }
 
   getTools(): ToolDefinition[] { return []; }
@@ -47,7 +54,11 @@ ${rules}`;
       switch (ctx.input.stage) {
         case "storyboard": return await this.doStoryboard(ctx.input.script, ctx.input.style);
         case "review": return await this.doReview(ctx.input.content, ctx.input.criteria);
-        default: return await this.doStyle(ctx.input.script || ctx.input.novel);
+        default: return await this.doStyle(ctx.input.script || ctx.input.novel, {
+          referenceImage: ctx.input.referenceImage,
+          referenceImages: ctx.input.referenceImages,
+          referenceDescription: ctx.input.referenceDescription,
+        });
       }
     } catch (err) {
       throw wrapAsAgentError(err, { agentRole: "director", stage: ctx.input.stage });
@@ -55,16 +66,23 @@ ${rules}`;
   }
 
   /** 风格推理 */
-  async doStyle(script: string): Promise<AgentResult> {
+  async doStyle(script: string, reference?: { referenceImage?: string; referenceImages?: string[]; referenceDescription?: string }): Promise<AgentResult> {
     const scriptText = typeof script === "string" ? script : JSON.stringify(script);
     if (!scriptText || scriptText.length < 10) {
       return { success: false, data: { error: "剧本内容不足, 无法推理风格" } };
     }
+    const referenceImages = reference?.referenceImages || (reference?.referenceImage ? [reference.referenceImage] : []);
+    const referenceMatches = referenceImages.length || reference?.referenceDescription
+      ? await new StyleReferenceMatcher().match({ referenceImage: referenceImages[0], description: reference?.referenceDescription }).catch(error => {
+        console.warn("[DirectorAgent] Style reference matching unavailable:", error instanceof Error ? error.message : error);
+        return [];
+      })
+      : [];
     const style = await StyleInferenceChain.infer(
       (p, o) => this.generateText(p, o),
-      scriptText,
+      scriptText + (referenceMatches.length ? `\n参考风格匹配:\n${JSON.stringify(referenceMatches.slice(0, 3))}` : ""),
     );
-    return { success: true, data: { visualStyle: style } };
+    return { success: true, data: { visualStyle: { ...style, referenceImages, referenceMatches } } };
   }
 
   /** 分镜规划 (无 default fallback) */

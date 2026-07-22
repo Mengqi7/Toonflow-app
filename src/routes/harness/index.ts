@@ -2,9 +2,51 @@
  import { v4 as uuid } from "uuid";
  import { harness } from "@/core/harness/init";
  import type { WorkflowInstance } from "@/core/harness/types";
- import { db } from "@/utils/db";
+import { db } from "@/utils/db";
+import Ai from "@/utils/ai";
+import { WorkflowGenerator } from "../../../toonflow-comfyui-agent/src/WorkflowGenerator";
 
 const router = express.Router();
+
+router.post("/workflow/generate", async (req, res) => {
+  try {
+    const description = String(req.body.description || "").trim();
+    if (!description) return res.status(400).json({ code: 400, message: "description required" });
+    const generator = new WorkflowGenerator();
+    const workflow = await generator.generate(description, req.body.template, async prompt => (await Ai.Text("universalAi", false, 0).invoke({ messages: [{ role: "user", content: prompt }] })).text);
+    const type = req.body.type === "video" ? "video" : "image";
+    const now = Date.now();
+    const [id] = await db("o_comfyui_workflow").insert({ name: String(req.body.name || description.slice(0, 80)), description, type, workflow_json: JSON.stringify(workflow), parameters: "[]", createdBy: "agent", createTime: now, updateTime: now });
+    res.json({ code: 200, data: { id, type, workflow } });
+  } catch (error) {
+    res.status(400).json({ code: 400, message: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Start the default film workflow directly from the project's persisted novel.
+router.post("/workflow/start-from-novel", async (req, res) => {
+  try {
+    const projectId = Number(req.body.projectId);
+    if (!Number.isFinite(projectId) || projectId <= 0) return res.status(400).json({ code: 400, message: "projectId required" });
+    const definitionId = String(req.body.workflowTemplate || "film-production");
+    if (!harness.workflowRunner.getDefinitions().has(definitionId)) return res.status(404).json({ code: 404, message: `Workflow '${definitionId}' not found` });
+    const rows = await db("o_novel").where({ projectId }).orderBy("chapterIndex", "asc");
+    const novel = String(req.body.novelText || rows.map((row: any) => row.chapterData || row.content || "").filter(Boolean).join("\n\n")).trim();
+    if (!novel) return res.status(400).json({ code: 400, message: "No novel content found for project" });
+    const instance: WorkflowInstance = {
+      id: uuid(), definitionId, status: "pending", nodeStates: new Map(), startedAt: Date.now(),
+      context: { data: new Map([["screenwriter.analyze", { novel, stage: "analyze" }]]), projectId, userId: (req as any).user?.id || 1, config: { ...req.body.configOverride, novel } },
+    };
+    res.json({ code: 200, data: { instanceId: instance.id, definitionId, status: "pending", novelLength: novel.length } });
+    void harness.workflowRunner.execute(instance).catch(async error => {
+      console.error(`[Harness] start-from-novel ${instance.id} failed:`, error);
+      instance.status = "failed";
+      await harness.workflowRunner.saveInstanceState(instance);
+    });
+  } catch (error) {
+    res.status(400).json({ code: 400, message: error instanceof Error ? error.message : String(error) });
+  }
+});
 
 // 启动工作流
 router.post("/workflow/start", async (req, res) => {
@@ -125,10 +167,19 @@ router.get("/agents", async (_req, res) => {
   try {
     const agents = harness.agentRegistry.listAll().map(a => ({
       id: a.id, name: a.name, role: a.role, capabilities: a.capabilities, version: a.version,
+      contract: harness.agentRegistry.getContract(a.id),
     }));
     res.json({ code: 200, data: agents });
   } catch (e: any) {
     res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+router.get("/agents/:id/contract", async (req, res) => {
+  try {
+    res.json({ code: 200, data: harness.agentRegistry.getContract(req.params.id) });
+  } catch (error) {
+    res.status(404).json({ code: 404, message: error instanceof Error ? error.message : String(error) });
   }
 });
 

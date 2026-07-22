@@ -468,13 +468,19 @@ const audioFormData = ref({
   sex: "",
 });
 
+function refreshFromHarness(event: Event) {
+  const patch = (event as CustomEvent).detail;
+  if (["assets", "characters", "props", "locations"].includes(patch?.domain)) void loadCurrentTabData();
+}
 onMounted(() => {
   loadCurrentTabData();
+  window.addEventListener("harness:ui-patch", refreshFromHarness);
 });
 
 onUnmounted(() => {
   stopPolling();
   stopImagePolling();
+  window.removeEventListener("harness:ui-patch", refreshFromHarness);
 });
 
 const { project } = storeToRefs(projectStore());

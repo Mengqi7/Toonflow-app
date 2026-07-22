@@ -2,6 +2,7 @@ import { FilmAgent } from "@/agents/FilmAgent";
 import type { AgentDescriptor, AgentContext, AgentResult, ToolDefinition } from "@/core/harness/types";
 import { ParseError, wrapAsAgentError } from "@/core/harness/errors";
 import { db } from "@/utils/db";
+import { CharacterConsistencyReviewer } from "@/review/CharacterConsistencyReviewer";
 
 /** 服装师 Agent — 设计角色服装, 写入角色库, 失败抛错 */
 export class CostumeAgent extends FilmAgent {
@@ -53,8 +54,7 @@ ${rules}`;
 
       // 写入角色库 (与 CallbackBridge 配合, 这里也写一次确保)
       try {
-        await db("o_character_library")
-          .insert({
+        const characterRow = {
             projectId: ctx.projectId,
             characterName: costume.characterName,
             description: charDesc.slice(0, 500),
@@ -67,15 +67,15 @@ ${rules}`;
             instanceId: ctx.instanceId,
             createTime: Date.now(),
             updateTime: Date.now(),
-          })
-          .onConflict(["projectId", "characterName", "source"])
-          .merge({
-            outfitStyle: costume.outfit || "",
-            hairStyle: costume.hairStyle || "",
-            accessories: JSON.stringify(costume.accessories || []),
-            makeup: costume.makeup || "",
-            updateTime: Date.now(),
-          });
+        };
+        const existingCharacter = await db("o_character_library")
+          .where({ projectId: ctx.projectId, characterName: costume.characterName })
+          .first();
+        if (existingCharacter) {
+          await db("o_character_library").where("id", existingCharacter.id).update(characterRow);
+        } else {
+          await db("o_character_library").insert(characterRow);
+        }
       } catch (dbErr) {
         console.warn("[CostumeAgent] DB write skipped:", dbErr instanceof Error ? dbErr.message : dbErr);
       }
@@ -90,7 +90,21 @@ ${rules}`;
         });
       } catch { /* 静默 */ }
 
-      return { success: true, data: { costume, consistencyCheck: costume.consistencyNotes || "OK" } };
+      const consistency = await new CharacterConsistencyReviewer().review({
+        projectId: ctx.projectId,
+        characterName: costume.characterName,
+        description: charDesc,
+        costume,
+        referenceImage: costume.referenceImage,
+      });
+      return {
+        success: true,
+        data: {
+          costume,
+          consistency,
+          consistencyCheck: consistency.passed ? (costume.consistencyNotes || "OK") : consistency.reason,
+        },
+      };
     } catch (err) {
       if (err instanceof ParseError) throw err;
       throw wrapAsAgentError(err, { agentRole: "costume" });

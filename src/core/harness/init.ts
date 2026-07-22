@@ -16,6 +16,7 @@ import fg from "fast-glob";
 import { TemplateLibrary } from "../../../toonflow-comfyui-agent/src/TemplateLibrary";
 import type { Template } from "../../../toonflow-comfyui-agent/src/TemplateLibrary";
 import { ReviewPipeline } from "../../review/ReviewPipeline";
+import { SupervisorAgent } from "@/agents/director/SupervisorAgent";
 import Ai from "@/utils/ai";
 import { HarnessEventBus, harnessEventBus } from "./HarnessEventBus";
 import { Hooks } from "./Hooks";
@@ -178,7 +179,8 @@ async function ensureTables(): Promise<void> {
           projectId INTEGER REFERENCES o_project(id),
           characterName TEXT NOT NULL,
           description TEXT, referenceImage TEXT, outfitStyle TEXT,
-          hairStyle TEXT, accessories TEXT,
+          hairStyle TEXT, accessories TEXT, makeup TEXT,
+          source TEXT, instanceId TEXT,
           embedding BLOB,
           createTime INTEGER, updateTime INTEGER
         )`,
@@ -202,6 +204,16 @@ async function ensureTables(): Promise<void> {
           thumbnail TEXT,
           createdBy TEXT DEFAULT 'user',
           createTime INTEGER, updateTime INTEGER
+        )`,
+      o_comfyui_workflow_version: `
+        CREATE TABLE IF NOT EXISTS o_comfyui_workflow_version (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          workflowId INTEGER NOT NULL,
+          version INTEGER NOT NULL,
+          workflowJson TEXT NOT NULL,
+          changedParams TEXT,
+          createdAt INTEGER NOT NULL,
+          UNIQUE(workflowId, version)
         )`,
       o_memory: `
         CREATE TABLE IF NOT EXISTS o_memory (
@@ -267,6 +279,43 @@ async function ensureTables(): Promise<void> {
         }
         console.log(`[Harness] Table created: ${tableName}`);
       }
+    }
+    // Existing installations may have created character tables before Harness added embeddings.
+    if (await knex.schema.hasTable("o_character_library") && !(await knex.schema.hasColumn("o_character_library", "embedding"))) {
+      await knex.schema.alterTable("o_character_library", table => table.binary("embedding"));
+    }
+    if (await knex.schema.hasTable("o_character_library") && !(await knex.schema.hasColumn("o_character_library", "source"))) {
+      await knex.schema.alterTable("o_character_library", table => table.text("source"));
+    }
+    if (await knex.schema.hasTable("o_character_library") && !(await knex.schema.hasColumn("o_character_library", "instanceId"))) {
+      await knex.schema.alterTable("o_character_library", table => table.text("instanceId"));
+    }
+    const businessColumns: Record<string, string[]> = {
+      o_script: ["sceneNumber", "source", "instanceId"],
+      o_storyboard: ["shotId", "scene", "shotType", "angle", "movement", "description", "characters", "imageUrl", "source", "instanceId", "updateTime"],
+      o_assets: ["url", "shotId", "source", "instanceId", "updateTime"],
+      o_scene_library: ["source", "instanceId"],
+      o_prop_library: ["instanceId"],
+    };
+    for (const [tableName, columns] of Object.entries(businessColumns)) {
+      if (!(await knex.schema.hasTable(tableName))) continue;
+      for (const column of columns) {
+        if (!(await knex.schema.hasColumn(tableName, column))) {
+          await knex.schema.alterTable(tableName, table => table.text(column));
+        }
+      }
+    }
+    const uniqueIndexes: Array<[string, string[]]> = [
+      ["o_script", ["projectId", "sceneNumber", "source"]],
+      ["o_storyboard", ["projectId", "shotId", "source"]],
+      ["o_assets", ["projectId", "shotId", "type", "source"]],
+      ["o_character_library", ["projectId", "characterName", "source"]],
+      ["o_scene_library", ["projectId", "sceneName", "source"]],
+      ["o_prop_library", ["projectId", "type", "name", "source"]],
+    ];
+    for (const [tableName, columns] of uniqueIndexes) {
+      if (!(await knex.schema.hasTable(tableName))) continue;
+      try { await knex.schema.alterTable(tableName, table => table.unique(columns)); } catch { /* already exists or legacy duplicates */ }
     }
   } catch (err) {
     console.warn("[Harness] ensureTables skipped (DB may not be ready):", err instanceof Error ? err.message : err);
@@ -349,6 +398,9 @@ export async function initHarness(): Promise<void> {
   // @ts-ignore - 注入私有静态字段
   harness.workflowRunner.constructor.initReviewPipeline(reviewPipeline);
   harness.reviewPipeline = reviewPipeline;
+  void new SupervisorAgent().learnFromHistory(harness.memoryBus, agentList.map(agent => agent.role), reviewPipeline).catch(error => {
+    console.warn("[Harness] Review history learning skipped:", error instanceof Error ? error.message : error);
+  });
   console.log(`[Harness] ReviewPipeline initialized`);
 
   // V2: 初始化 DirectorOrchestrator (导演 Agent 调度器)

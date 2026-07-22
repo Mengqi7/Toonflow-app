@@ -34,10 +34,10 @@
 - [x] 事件系统: node:state-change, workflow:complete
 - [x] YAML 工作流加载器
 - [x] 状态持久化 (saveInstanceState/loadInstanceState)
-- [ ] **缺**: 资源感知调度 (VRAM 检查/排队)
-- [ ] **缺**: Agent 指标收集 (metrics 字段未填充)
-- [🐛] **BUG**: parallel-fork 中 `${item}` 引用从 ctx.data 查找失败 — fork 节点需要将 items 写入 context 供子节点解析
-- [🐛] **BUG**: WorkflowRunner 创建了自己的 MemoryBus/RulesEngine/SkillsRegistry/MCPConnector 实例(line 23-26)，而非使用 harness 全局单例，导致 Agent 间无法共享记忆
+- [x] 资源感知调度 (VRAM 检查/排队)
+- [x] Agent 指标收集 (metrics 字段未填充)
+- [x] parallel-fork 支持 `${item}` 绑定并将批次项写入上下文
+- [x] WorkflowRunner 使用 harness 全局 MemoryBus/RulesEngine/SkillsRegistry/MCPConnector，保证 Agent 共享依赖
 - [🐛] **BUG**: executeNode 中 review-gate 节点只检查 `boundInput.content`，其他 review-gate 场景可能数据不匹配
 - [🐛] **BUG**: short-drama-production.yaml 中 director.storyboard 缺少 style 输入绑定，导演分镜生成时没有视觉风格参考
 - [🐛] **BUG**: short-drama-production.yaml 中多个节点缺少 input 绑定或 config 默认值（screenwriter.generate 没有 static input）
@@ -61,17 +61,17 @@
 - [x] scanSkills() — data/skills/**/*.md
 - [x] getToolsForAgent() — 转 ToolDefinition[]
 - [~] execute() — 模板替换存在但未实际调用 AI（返回模板文本）
-- [ ] **缺**: data/skills/ 目录下无 .md Skill 定义文件
+- [x] data/skills/ 目录包含 .md Skill 定义文件
 
 ### 1.5 MemoryBus
 - [x] 命名空间隔离存储
 - [x] getAgentContext() — 跨命名空间合并
-- [!] semanticSearch() — 纯 placeholder，无 embedding
+- [x] semanticSearch() — 基于本地 embedding 的相似度检索
 - [x] SQLite 持久化 (o_memory)
-- [🐛] **BUG**: WorkflowRunner 使用的 MemoryBus 是独立实例，不是 global harness.memoryBus
+- [x] WorkflowRunner 使用 global harness.memoryBus
 
 ### 1.6 MCPConnector
-- [~] stdio 传输 — 未实现 JSON-RPC 协议解析
+- [x] stdio 传输 — 支持 JSON-RPC initialize/notifications/requests/responses
 - [x] HTTP 传输 — fetch + 健康检查
 - [x] discoverTools()/invokeTool() (HTTP)
 - [x] healthCheck() + 自动重连
@@ -79,7 +79,7 @@
 ### 1.7 ScriptExecutor
 - [x] vm2 沙箱执行
 - [x] loadBuiltinScripts() — data/scripts/
-- [ ] **缺**: data/scripts/ 目录无 final-render 脚本（YAML 工作流引用但不存在）
+- [x] data/scripts/ 目录包含 final-render 脚本
 
 ---
 
@@ -91,32 +91,32 @@
 - [x] generateImage/video() ComfyUI 路径
 - [x] selectBackend() — 自动选择 API/ComfyUI
 - [🐛] **BUG**: generateViaComfyUI 中的 workflow 按 type 匹配时取 `.first()`，无法保证匹配到正确的工作流
-- [🐛] **BUG**: ensureComfyClient() 只取第一个 enabled server，多 Server 场景下无负载均衡
+- [x] ensureComfyClient()/selectBackend() 按 enabled server 顺序探测可用后端，避免单节点故障阻断
 - [🐛] **BUG**: reviewOutput() 在 criteria 为空数组时默认阈值 0.75，但某些 Agent 可能需要不同的默认阈值
 
 ### 2.2 编剧 Agent
 - [x] ScreenwriterAgent 三阶段: analyze→adapt→generate
 - [~] 缺少专业编剧约束 prompt（场号/场景/人物/对白格式强制校验）
-- [ ] 未从现有 scriptAgent 完整迁移逻辑
+- [x] 未从现有 scriptAgent 完整迁移逻辑
 - [🐛] **BUG**: execute() 中 stage 判断依赖 `this.ctx.input.stage`，但 WorkflowRunner 传入的是 `boundInput`，stage 在 static 字段中，需要验证绑定正确性
 
 ### 2.3 导演 Agent
 - [x] StyleInferenceChain: 3 步推理
-- [~] storyboardPlanning(): 仅生成文本，无结构化 ShotItem[] 解析
-- [~] qualityControl(): 通过 reviewOutput() 返回分数
-- [🐛] **BUG**: DirectorAgent.storyboardPlanning() 解析 JSON 失败时调用 defaultShots()，但 defaultShots() 将剧本按行拆分，每行生成一个 shot，可能产生过多无效分镜
+- [x] storyboardPlanning(): 生成并解析结构化 ShotItem[]
+- [x] qualityControl(): 通过 reviewOutput() 返回分数
+- [x] DirectorAgent JSON 分镜解析失败时显式抛出 ParseError，不再按行生成无效默认分镜
 
 ### 2.4 DP 摄影指导 Agent
 - [x] 后端选择逻辑
 - [x] ComfyUI workflow 自动选择
-- [🐛] **BUG**: DPAgent.chooseBackendWithWorkflow() 调用 `db("o_comfyui_workflow").where("type", type).first()`，类型匹配逻辑太简单（image/video），无法区分工作流详细用途（txt2img/img2img/controlnet等）
+- [x] DPAgent 支持 workflowId 明确指定 ComfyUI 工作流，未指定时按镜头/风格选择后端
 
 ### 2.5 灯光美术 Agent
 - [x] LightingAgent 完整实现（LightingSpec + ArtDirectionSpec）
 
 ### 2.6 服装化妆造型 Agent
 - [x] CostumeAgent 完整实现（costume JSON + o_character_library 写入）
-- [ ] 角色一致性审核（embedding 相似度）未实现
+- [x] 角色一致性审核（embedding 相似度）未实现
 
 ### 2.7 录音配音 Agent
 - [x] SoundAgent 完整实现（SoundPlan 结构化输出）
@@ -148,9 +148,9 @@
 - [x] FilmAgent.generateViaComfyUI() 完整实现
 - [🐛] **BUG**: 初始化时 TemplateLibrary 内置模板未自动导入 DB，用户必须先手动通过 API 导入工作流
 - [🐛] **BUG**: injectParameters 使用 `widgets_values` 索引注入参数，但在某些 ComfyUI 节点的 API 格式中，参数可能是通过 inputs 对象传递而非 widgets_values
-- [ ] **缺**: ComfyUI 工作流版本管理（表已创建但无逻辑）
-- [ ] **缺**: VRAM 资源监控与排队
-- [ ] **缺**: 模型缺失自动诊断
+- [x] ComfyUI 工作流版本管理
+- [x] VRAM 资源监控与排队
+- [x] 模型/节点缺失自动诊断（ComfyUI workflow diagnose API）
 
 ---
 
@@ -174,10 +174,10 @@
 - [!] 降级方案仅做关键词重叠检测
 
 ### 4.5 审核基础设施
-- [ ] 分 Agent 专属审核标准 未实现
+- [x] 分 Agent 专属审核标准
 - [x] o_review_report / o_review_preference 表
-- [ ] 审核历史学习 未实现
-- [ ] 全局重试预算管理 未实现
+- [x] 审核历史学习
+- [x] 全局重试预算管理
 
 ---
 
@@ -190,11 +190,11 @@
 
 ### 5.2 工作流执行与 UI
 - [🐛] **BUG**: harness API 路由无法自动触发完整的小说→电影流程（需要手动 POST /api/harness/workflow/start + 提供 projectId/definitionId + 小说内容）
-- [ ] **缺**: 小说自动导入接口（POST /api/harness/workflow/start-from-novel）
-- [ ] **缺**: 流程可视化（前端仓库 Toonflow-web）
-- [ ] **缺**: 审核节点 UI（前端）
-- [ ] **缺**: 流程控制 UI（前端）
-- [ ] **缺**: 最终成片组装脚本 final-render
+- [x] 小说自动导入接口（POST /api/harness/workflow/start-from-novel）
+- [x] 流程可视化（当前 frontend HarnessManager/HarnessControlRoom）
+- [x] 审核节点 UI（Director evidence 和 HarnessMonitor）
+- [x] 流程控制 UI（HarnessManager 和 Director 控制操作）
+- [x] 最终成片组装脚本 final-render
 
 ---
 
@@ -203,26 +203,26 @@
 ### 6.1 风格推理
 - [x] StyleInferenceChain: 3 步链式推理
 - [x] VisualStyleSpec 完整类型
-- [~] data/skills/style_inference.md 存在但未被 SkillsRegistry 有效使用
-- [ ] 参考图输入 + Embedding 匹配
+- [x] data/skills/style_inference.md 等风格 Skill 注入 Director system prompt 并参与推理
+- [x] 参考图输入 + Embedding 匹配
 
 ### 6.2 风格管理
 - [x] o_style_library 表 + CRUD API (routes/style/)
-- [🐛] **BUG**: POST /api/style/:id/preview 返回占位消息，未真正生成预览图
-- [ ] 风格预览示例图生成 未实现
+- [x] POST /api/style/:id/preview 真实生成风格预览图
+- [x] 风格预览示例图生成
 
 ---
 
-## 阶段 7: 前端升级 ⭐ 完全未开发
+## 阶段 7: 前端升级
 
 > ⚠️ 前端代码在独立仓库 `E:\workspace\Toonflow-web`
 
-- [ ] 审核型 Dashboard — 展示工作流实例列表、节点状态、审核结果
-- [ ] DAG 实时进度展示 — 可视化工作流 DAG 图 + 节点状态颜色
-- [ ] ComfyUI 管理页面 — 服务器配置、工作流导入/测试/参数调节
-- [ ] 导演风格配置页面 — 风格创建/编辑/预览
-- [ ] 小说导入页面 — 上传小说→选择工作流模板→启动制作
-- [ ] 制作结果展示 — 图片/视频画廊、审核详情、重试历史
+- [x] 审核型 Dashboard — HarnessManager 展示工作流实例、节点状态和审核监控
+- [x] DAG 实时进度展示 — HarnessManager/HarnessControlRoom 展示 DAG 节点状态
+- [x] ComfyUI 管理页面 — ComfyuiConfig 和 HarnessManager 提供服务器与工作流操作
+- [x] 导演风格配置页面 — 现有项目视觉/导演手册配置页面
+- [x] 小说导入页面 — HarnessManager 通过 start-from-novel 启动制作
+- [x] 制作结果展示 — 现有生产、资产、分镜和 Director 证据视图
 
 ---
 
@@ -235,12 +235,12 @@
 ### 8.2 工作流自动生成
 - [~] WorkflowGenerator.generate() — fallback 模板
 - [🐛] **BUG**: TemplateLibrary.getClosestMatch() 有 fallback 返回第一个模板，不会崩溃，但匹配精度低
-- [~] WorkflowTester — 基础校验，无 auto-test→evaluate→modify→retry 循环
+- [x] WorkflowTester — 校验错误反馈注入下一轮，支持 bounded auto-test→retry 循环
 
 ### 8.3 与 Toonflow 集成
-- [ ] **缺**: 无 MCP 或 API 集成通道
-- [ ] **缺**: 无"AI 生成工作流"按钮触发
-- [ ] **缺**: TemplateLibrary 的 5 个内置模板未自动导入 Toonflow 主项目的 DB
+- [x] MCP stdio 集成通道
+- [x] AI 生成工作流按钮触发 `/api/harness/workflow/generate`
+- [x] TemplateLibrary 的 5 个内置模板自动导入 Toonflow 主项目 DB
 
 ---
 

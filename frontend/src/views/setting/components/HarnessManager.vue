@@ -100,6 +100,7 @@
       <t-tab-panel value="templates" label="📦 可用模板">
         <div class="toolbar-row">
           <t-button theme="primary" size="small" @click="loadTemplates">🔄 刷新模板</t-button>
+          <t-button theme="default" size="small" @click="generateWorkflow">AI 生成工作流</t-button>
         </div>
         <t-table :data="templates" :columns="templateColumns" row-key="id" size="small" hover>
           <template #nodeCount="{row}"><t-tag theme="primary" variant="light">{{ row.nodeCount || 0 }} nodes</t-tag></template>
@@ -221,7 +222,7 @@ async function startFromNovel() {
     if (novelStartForm.value.chapterFrom && novelStartForm.value.chapterTo) {
       payload.chapterRange = { from: novelStartForm.value.chapterFrom, to: novelStartForm.value.chapterTo };
     }
-    const res = await axios.post('/harness/startFromNovel/', payload);
+    const res = await axios.post('/harness/workflow/start-from-novel', payload);
     const data = res.data?.data || res.data;
     novelStartResult.value = {
       success: true,
@@ -303,6 +304,18 @@ async function loadTemplates() {
   } catch (e) {
     console.warn('加载模板列表失败:', e);
     templates.value = [];
+  }
+}
+
+async function generateWorkflow() {
+  const description = window.prompt("Describe the ComfyUI workflow to generate");
+  if (!description?.trim()) return;
+  try {
+    await axios.post('/harness/workflow/generate', { description: description.trim(), type: 'image' });
+    window.$message.success('工作流已生成');
+    await loadTemplates();
+  } catch (error: any) {
+    window.$message.error(error?.response?.data?.message || error?.message || '工作流生成失败');
   }
 }
 

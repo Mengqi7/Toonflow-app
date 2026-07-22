@@ -1,6 +1,7 @@
 import { FilmAgent } from "@/agents/FilmAgent";
 import type { AgentDescriptor, AgentContext, AgentResult, ToolDefinition } from "@/core/harness/types";
 import { ParseError } from "@/core/harness/errors";
+import { db } from "@/utils/db";
 
 /** 编剧 Agent — 接收小说, 输出标准格式剧本, 由导演 Agent 调度 */
 export class ScreenwriterAgent extends FilmAgent {
@@ -38,11 +39,68 @@ ${rules}`;
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const stage = ctx.input.stage || "generate";
     switch (stage) {
+      case "legacy": return this.executeLegacyPipeline(ctx);
+      case "skeleton": return this.executeLegacyStage(ctx, "skeleton");
+      case "adaptation": return this.executeLegacyStage(ctx, "adaptation");
+      case "screenplay": return this.executeLegacyStage(ctx, "screenplay");
+      case "supervision": return this.executeLegacyStage(ctx, "supervision");
       case "analyze": return this.doAnalyze(ctx.input.novel || ctx.config.novel || "");
       case "adapt": return this.doAdapt(ctx.input.analysis || ctx.input.novelAnalysis || "");
       case "revise": return this.doRevise(ctx.input.novel || ctx.config.novel || "", ctx.input.retryInstruction);
       default: return this.doGenerate(ctx.input.novel || ctx.config.novel || "", ctx.input.retryInstruction);
     }
+  }
+
+  /** Compatibility bridge for the former socket scriptAgent pipeline. */
+  private async executeLegacyPipeline(ctx: AgentContext): Promise<AgentResult> {
+    const base = await this.loadLegacyContext(ctx);
+    const skeleton = await this.executeLegacyStage({ ...ctx, input: { ...ctx.input, ...base, stage: "skeleton" } }, "skeleton");
+    const adaptation = await this.executeLegacyStage({ ...ctx, input: { ...ctx.input, ...base, ...skeleton.data, stage: "adaptation" } }, "adaptation");
+    const screenplay = await this.executeLegacyStage({ ...ctx, input: { ...ctx.input, ...base, ...skeleton.data, ...adaptation.data, stage: "screenplay" } }, "screenplay");
+    const supervision = await this.executeLegacyStage({ ...ctx, input: { ...ctx.input, ...base, ...skeleton.data, ...adaptation.data, ...screenplay.data, stage: "supervision" } }, "supervision");
+    return { success: true, data: { ...base, ...skeleton.data, ...adaptation.data, ...screenplay.data, supervision: supervision.data.supervision } };
+  }
+
+  private async executeLegacyStage(ctx: AgentContext, stage: "skeleton" | "adaptation" | "screenplay" | "supervision"): Promise<AgentResult> {
+    const input = ctx.input;
+    const eventContext = input.events || input.novel || "";
+    const source = stage === "skeleton" ? "script_execution_skeleton.md" : stage === "adaptation" ? "script_execution_adaptation.md" : stage === "screenplay" ? "script_execution_script.md" : "script_agent_supervision.md";
+    const skill = this.skills?.getBySourceName(source);
+    const task = [
+      skill?.content || `Execute the ${stage} stage for a screenplay.`,
+      `Project data: ${JSON.stringify(input.projectData || {})}`,
+      `Novel events and source text:\n${String(eventContext).slice(0, 16000)}`,
+      input.storySkeleton ? `Story skeleton:\n${input.storySkeleton}` : "",
+      input.adaptationStrategy ? `Adaptation strategy:\n${input.adaptationStrategy}` : "",
+      input.retryInstruction ? `Revision instruction:\n${JSON.stringify(input.retryInstruction)}` : "",
+      "Return the requested structured result without omitting required constraints.",
+    ].filter(Boolean).join("\n\n");
+    const result = await this.generateText(task, { temperature: stage === "supervision" ? 0.2 : 0.6, maxTokens: 8192 });
+    if (!result.trim()) throw new ParseError(`legacy ${stage} output`, result, { agentRole: "screenwriter" });
+    if (stage === "skeleton") return { success: true, data: { storySkeleton: this.extractTagged(result, "storySkeleton") || result } };
+    if (stage === "adaptation") return { success: true, data: { adaptationStrategy: this.extractTagged(result, "adaptationStrategy") || result } };
+    if (stage === "screenplay") return { success: true, data: { script: result, scriptItems: this.extractScriptItems(result) } };
+    return { success: true, data: { supervision: result } };
+  }
+
+  private async loadLegacyContext(ctx: AgentContext): Promise<Record<string, any>> {
+    const projectData = await db("o_project").where("id", ctx.projectId).first().catch(() => undefined);
+    const novels = await db("o_novel").where("projectId", ctx.projectId).orderBy("chapterIndex", "asc").select("chapterIndex", "chapter", "chapterData", "event").catch(() => []);
+    const work = await db("o_agentWorkData").where({ projectId: ctx.projectId, key: "scriptAgent" }).first().catch(() => undefined);
+    const events = novels.map((row: any) => `Chapter ${row.chapterIndex}: ${row.chapter || ""}\n${row.event || ""}\n${row.chapterData || ""}`).join("\n\n");
+    return { projectData, events, novel: events, ...(work?.data ? { legacyWorkData: this.tryParse(work.data) } : {}) };
+  }
+
+  private extractTagged(text: string, tag: string): string {
+    return text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"))?.[1]?.trim() || "";
+  }
+
+  private extractScriptItems(text: string): Array<{ name: string; content: string }> {
+    return [...text.matchAll(/<scriptItem\s+name=["']([^"']+)["']>([\s\S]*?)<\/scriptItem>/gi)].map(match => ({ name: match[1], content: match[2].trim() }));
+  }
+
+  private tryParse(value: string): any {
+    try { return JSON.parse(value); } catch { return value; }
   }
 
   /** 分析小说结构 */

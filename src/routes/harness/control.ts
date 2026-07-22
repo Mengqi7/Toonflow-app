@@ -19,6 +19,7 @@ import { harness } from "@/core/harness/init";
 import { directorOrchestrator } from "@/core/harness/DirectorOrchestrator";
 import { callbackBridge } from "@/core/harness/CallbackBridge";
 import { harnessEventBus } from "@/core/harness/HarnessEventBus";
+import { db } from "@/utils/db";
 
 const router = express.Router();
 
@@ -184,6 +185,11 @@ router.post("/:id/user-input", async (req: express.Request, res: express.Respons
       timestamp: Date.now(),
     } as any);
 
+    if (directorOrchestrator) {
+      const resumed = await directorOrchestrator.handleUserInput(instanceId, String(choice));
+      return res.json({ code: 200, data: { acknowledged: true, choice, ...resumed } });
+    }
+
     if (String(choice).includes("approve")) {
       await harnessEventBus.emitEvent({
         kind: "director.message",
@@ -237,6 +243,21 @@ router.get("/:id/versions/:type/:key", async (req: express.Request, res: express
     res.json({ code: 200, data: versions });
   } catch (e: any) {
     res.status(400).json({ code: 400, message: e.message });
+  }
+});
+
+// Unified artifact warehouse for the three-layer control room.
+router.get("/:id/warehouse", async (req: express.Request, res: express.Response) => {
+  try {
+    const projectId = Number(req.query.projectId);
+    if (!projectId) return res.status(400).json({ code: 400, message: "projectId required" });
+    let query = db("o_artifact_version").where("projectId", projectId).orderBy("createdAt", "desc");
+    const artifactType = typeof req.query.artifactType === "string" ? req.query.artifactType : "";
+    if (artifactType) query = query.where("artifactType", artifactType);
+    const rows = await query.limit(100);
+    res.json({ code: 200, data: rows });
+  } catch (error) {
+    res.status(400).json({ code: 400, message: error instanceof Error ? error.message : String(error) });
   }
 });
 
