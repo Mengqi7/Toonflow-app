@@ -1,4 +1,4 @@
-// @db-hash f5d050145d03a52b5b502043bc559ec0
+// @db-hash 307018e32020719129634d38c84121b9
 //该文件由脚本自动生成，请勿手动修改
 
 export interface memories {
@@ -67,6 +67,28 @@ export interface o_assetsRole2Audio {
   'assetsAudioId'?: number;
   'assetsRoleId'?: number;
 }
+export interface o_comfyui_server {
+  'baseUrl': string;
+  'createTime': number;
+  'enabled'?: boolean | null;
+  'id'?: string;
+  'lastCheckTime'?: number | null;
+  'name': string;
+  'status'?: string | null;
+  'updateTime'?: number | null;
+}
+export interface o_comfyui_workflow {
+  'analysis'?: string | null;
+  'createTime': number;
+  'id'?: string;
+  'name': string;
+  'paramMapping'?: string | null;
+  'schema'?: string | null;
+  'serverId'?: string | null;
+  'status'?: string | null;
+  'type': string;
+  'workflowJson': string;
+}
 export interface o_event {
   'createTime'?: number | null;
   'detail'?: string | null;
@@ -97,7 +119,6 @@ export interface o_modelPrompt {
   'id'?: number;
   'model'?: string | null;
   'path'?: string | null;
-  'prompt'?: string | null;
   'vendorId'?: string | null;
 }
 export interface o_novel {
@@ -237,6 +258,8 @@ export interface DB {
   "o_assets": o_assets;
   "o_assets2Storyboard": o_assets2Storyboard;
   "o_assetsRole2Audio": o_assetsRole2Audio;
+  "o_comfyui_server": o_comfyui_server;
+  "o_comfyui_workflow": o_comfyui_workflow;
   "o_event": o_event;
   "o_eventChapter": o_eventChapter;
   "o_image": o_image;

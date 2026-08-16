@@ -13,6 +13,7 @@ import { getArtPrompt } from "@/utils/getArtPrompt";
 import replaceUrl from "@/utils/replaceUrl";
 import writeVersion from "@/utils/writeVersion";
 import * as vendor from "@/utils/vendor";
+import { comfyui } from "@/utils/comfyui";
 
 export default {
   db,
@@ -30,4 +31,5 @@ export default {
   replaceUrl,
   writeVersion,
   vendor,
+  comfyui,
 };

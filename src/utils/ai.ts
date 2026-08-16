@@ -122,11 +122,66 @@ async function getVendorTemplateFn(fnName: FnName, modelName: `${string}:${strin
   const modelList = await u.vendor.getModelList(id);
   const selectedModel = modelList.find((i: any) => i.modelName == name);
   if (!selectedModel) throw new Error(`未找到模型 ${name} id=${id}`);
+
+  // ── ComfyUI 引擎：绕过 vendor脚本，直接调用 ComfyUI 工作流 ──
+  if ((selectedModel as any).engine === "comfyui") {
+    if (fnName === "videoRequest" || fnName === "imageRequest") {
+      return (input: any) => {
+        // 收集参考图（按顺序：首帧/尾帧/参考图），仅取 image 类型
+        const referenceImages: string[] = Array.isArray(input.referenceList)
+          ? input.referenceList
+              .filter((r: any) => r && r.type !== "audio" && typeof r.base64 === "string" && r.base64)
+              .map((r: any) => r.base64)
+          : [];
+
+        const config: any = {
+          prompt: input.prompt,
+          duration: input.duration,
+          size: input.resolution || input.size,
+          width: input.width,
+          height: input.height,
+          seed: input.seed,
+          steps: input.steps,
+          cfg: input.cfg,
+          referenceImages,
+        };
+        // 兼容旧的单图字段
+        if (input.referenceImageBase64) {
+          config.referenceImageBase64 = input.referenceImageBase64;
+        } else if (input.referenceImage) {
+          config.referenceImage = input.referenceImage;
+        }
+        // 尾帧
+        if (input.endImageBase64) {
+          config.endImageBase64 = input.endImageBase64;
+        }
+
+        const workflowId = (selectedModel as any).workflowId || name;
+        console.log(`[ai] ComfyUI 路由: ${id}:${name} → ${fnName} (workflow=${workflowId})`);
+        return u.comfyui.executeById(workflowId, config);
+      };
+    }
+    throw new Error(`ComfyUI 引擎不支持 ${fnName} 操作`);
+  }
+
   const code = u.vendor.getCode(id);
   const jsCode = transform(code, { transforms: ["typescript"] }).code;
   const running = u.vm(jsCode);
   if (running.vendor) {
     Object.assign(running.vendor.inputValues, JSON.parse(vendorConfigData.inputValues ?? "{}"));
+    // 如果配置了 workflowId，从工作流库加载 JSON 并注入
+    if (running.vendor.inputValues.workflowId && !running.vendor.inputValues.workflowJson) {
+      try {
+        const workflowRecord = await u.db("o_comfyui_workflow")
+          .where("id", running.vendor.inputValues.workflowId)
+          .first();
+        if (workflowRecord?.workflowJson) {
+          running.vendor.inputValues.workflowJson = workflowRecord.workflowJson;
+        }
+      } catch (e: any) {
+        console.warn("[ai] workflow resolution failed:", e.message);
+      }
+    }
     running.vendor.models = modelList;
   }
   const fn = running[fnName];

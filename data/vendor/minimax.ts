@@ -38,6 +38,7 @@ interface VideoModel {
   associationSkills?: string;
   audio: "optional" | false | true;
   durationResolutionMap: { duration: number[]; resolution: string[] }[];
+  engine?: "api" | "comfyui";
 }
 
 interface TTSModel {
@@ -137,7 +138,7 @@ const vendor: VendorConfig = {
   version: "2.1",
   author: "Toonflow",
   name: "MiniMax(海螺AI)",
-  description: "MiniMax官方接口适配，支持M系列推理文本模型、文生图/图生图、视频生成（文生视频、图生视频、首尾帧生成）能力 \n [前往平台](https://minimaxi.com/)",
+  description: "MiniMax官方接口适配，支持M系列推理文本模型、文生图/图生图、视频生成（文生视频、图生视频、首尾帧生成）能力。MiniMax H3 全模态模型请通过 ComfyUI 工作流使用。\n [前往平台](https://minimaxi.com/)",
   inputs: [
     { key: "apiKey", label: "API密钥", type: "password", required: true },
     { key: "baseUrl", label: "请求地址", type: "url", required: true, placeholder: "示例：https://api.minimaxi.com" },
@@ -187,6 +188,31 @@ const vendor: VendorConfig = {
       durationResolutionMap: [
         { duration: [6], resolution: ["512P", "768P", "1080P"] },
         { duration: [10], resolution: ["512P", "768P"] },
+      ],
+    },
+    // MiniMax H3 全模态模型（通过 ComfyUI 本地运行）
+    {
+      name: "MiniMax H3 文生视频 (ComfyUI)",
+      modelName: "MiniMax-H3-T2V",
+      type: "video",
+      mode: ["text"],
+      audio: "optional",
+      engine: "comfyui",
+      associationSkills: "需在ComfyUI中安装MiniMax H3节点及模型文件",
+      durationResolutionMap: [
+        { duration: [2, 3, 4, 5, 6], resolution: ["720P", "1080P"] },
+      ],
+    },
+    {
+      name: "MiniMax H3 图生视频 (ComfyUI)",
+      modelName: "MiniMax-H3-I2V",
+      type: "video",
+      mode: ["singleImage"],
+      audio: "optional",
+      engine: "comfyui",
+      associationSkills: "需在ComfyUI中安装MiniMax H3节点及模型文件",
+      durationResolutionMap: [
+        { duration: [2, 3, 4, 5, 6], resolution: ["720P", "1080P"] },
       ],
     },
   ],
@@ -281,6 +307,16 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
 };
 
 const videoRequest = async (config: VideoConfig, model: VideoModel): Promise<string> => {
+  // MiniMax H3 通过 ComfyUI 工作流本地运行
+  if ((model as any).engine === "comfyui") {
+    throw new Error(
+      `MiniMax H3 模型需要在 ComfyUI 中本地运行。请：
+1. 确保 ComfyUI 已安装 MiniMax H3 自定义节点
+2. 下载对应模型文件（qwen3vl_32b, minimax_h3_fl2va, video_vae, audio_vae）
+3. 在 Toonflow 的 ComfyUI 工作流中选择 "MiniMax H3 ${model.modelName === "MiniMax-H3-T2V" ? "Text-to-Video" : "Image-to-Video"}" 工作流`
+    );
+  }
+
   if (!vendor.inputValues.apiKey) throw new Error("缺少API Key");
   const baseUrl = getBaseUrl();
   const headers = getHeaders();

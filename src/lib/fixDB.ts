@@ -5,6 +5,7 @@ import { Knex } from "knex";
 import db from "@/utils/db";
 import { transform } from "sucrase";
 import rawVendorData from "./vendor.json";
+import { ensureComfyUIVendor } from "@/services/comfyui/workflow-model-sync";
 
 const vendorData = rawVendorData as Record<string, string>;
 
@@ -190,6 +191,9 @@ export default async (knex: Knex): Promise<void> => {
   if (Number(toonflowVer) < 3.2) {
     u.vendor.writeCode("toonflow", vendorData["toonflow.ts"]);
   }
+
+  // 确保 ComfyUI 虚拟供应商存在（承载导入的工作流模型）
+  await ensureComfyUIVendor(u);
 };
 
 async function tempOnsert(tsCode: string) {

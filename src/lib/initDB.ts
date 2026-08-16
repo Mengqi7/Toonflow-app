@@ -1005,6 +1005,40 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
         ]);
       },
     },
+    // ComfyUI 服务表
+    {
+      name: "o_comfyui_server",
+      builder: (table) => {
+        table.string("id").notNullable();
+        table.text("name").notNullable();
+        table.text("baseUrl").notNullable();
+        table.boolean("enabled").defaultTo(true);
+        table.text("status").defaultTo("unknown"); // connected | disconnected | unknown
+        table.integer("lastCheckTime");
+        table.integer("createTime").notNullable();
+        table.integer("updateTime");
+        table.primary(["id"]);
+        table.unique(["id"]);
+      },
+    },
+    // ComfyUI 工作流表
+    {
+      name: "o_comfyui_workflow",
+      builder: (table) => {
+        table.string("id").notNullable();
+        table.string("serverId");
+        table.text("name").notNullable();
+        table.text("type").notNullable(); // image | video
+        table.text("workflowJson").notNullable(); // 工作流 JSON
+        table.text("analysis"); // 智能分析结果 JSON
+        table.text("schema"); // 参数 Schema JSON (ComfyUIService)
+        table.text("paramMapping"); // 用户自定义参数映射 JSON
+        table.text("status").defaultTo("active"); // active | inactive
+        table.integer("createTime").notNullable();
+        table.primary(["id"]);
+        table.unique(["id"]);
+      },
+    },
     //记忆表（message=原始消息, summary=压缩摘要）
     {
       name: "memories",
@@ -1051,4 +1085,27 @@ export default async (knex: Knex, forceInit: boolean = false): Promise<void> => 
       }
     }
   }
+
+  // ========================================
+  // 数据库迁移补丁：给已有表增加缺失列
+  // ========================================
+  try {
+    const hasSchemaCol = await knex.schema.hasColumn("o_comfyui_workflow", "schema");
+    if (!hasSchemaCol) {
+      await knex.schema.alterTable("o_comfyui_workflow", (table) => {
+        table.text("schema");
+      });
+      console.log("[数据库迁移] o_comfyui_workflow 添加 schema 列");
+    }
+  } catch { /* 忽略迁移错误 */ }
+
+  try {
+    const hasMappingCol = await knex.schema.hasColumn("o_comfyui_workflow", "paramMapping");
+    if (!hasMappingCol) {
+      await knex.schema.alterTable("o_comfyui_workflow", (table) => {
+        table.text("paramMapping");
+      });
+      console.log("[数据库迁移] o_comfyui_workflow 添加 paramMapping 列");
+    }
+  } catch { /* 忽略迁移错误 */ }
 };
