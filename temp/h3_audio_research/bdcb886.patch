@@ -1,0 +1,351 @@
+﻿From bdcb886a4705a03cf40f4a7226de9fc7c059fc90 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jukka=20Sepp=C3=A4nen?=
+ <40791699+kijai@users.noreply.github.com>
+Date: Thu, 6 Aug 2026 23:36:34 +0300
+Subject: [PATCH] Fix sampler issues for audio with minimax, support more
+ samplers. (#15243)
+
+---
+ comfy/ldm/minimax/model.py       | 42 ++++++++++++++++--------------
+ comfy/model_base.py              | 34 +++++++++++++++++++++++-
+ comfy/model_sampling.py          | 21 +++++++++++++++
+ comfy/samplers.py                |  2 ++
+ comfy/supported_models.py        |  1 +
+ comfy_extras/nodes_lt.py         | 44 +++++++++++++++++++++++++++++---
+ comfy_extras/nodes_minimax_h3.py | 15 ++++++-----
+ 7 files changed, 129 insertions(+), 30 deletions(-)
+
+diff --git a/comfy/ldm/minimax/model.py b/comfy/ldm/minimax/model.py
+index 494350d40b2..98bd841dbe9 100644
+--- a/comfy/ldm/minimax/model.py
++++ b/comfy/ldm/minimax/model.py
+@@ -9,8 +9,9 @@
+ Timestep domain: the model receives the *video* sigma from the sampler and
+ derives per-token timesteps t = 1 - sigma internally; the audio stream runs on
+ its own shifted schedule (sigma_shift video 12.0 / audio 3.0), mapped from the
+-video sigma in closed form. The audio velocity is returned scaled by the
+-schedule map's derivative d(sigma_a)/d(sigma_v).
++video sigma in closed form. The sampler carries the audio latent scaled onto the
++video schedule (ModelSamplingAV); forward() undoes that scale and converts the
++velocity back, so _forward only ever sees the stream's own latent.
+ """
+ 
+ import math
+@@ -38,17 +39,6 @@ def time_shift_sigma(sigma, from_shift, to_shift):
+     return to_shift * base / (1.0 + (to_shift - 1.0) * base)
+ 
+ 
+-def time_shift_slope(sigma, from_shift, to_shift):
+-    """d(sigma_to)/d(sigma_from) at the same base-grid point.
+-
+-    Scaling a stream's returned velocity by this slope makes the flat ODE that
+-    any sampler integrates on the from-schedule equal to that stream's true ODE
+-    on its own schedule.
+-    """
+-    base = sigma / (from_shift + sigma * (1.0 - from_shift))
+-    return (to_shift * (1.0 + (from_shift - 1.0) * base) ** 2) / (from_shift * (1.0 + (to_shift - 1.0) * base) ** 2)
+-
+-
+ def patchify_video(latent, patch_size=(1, 2, 2)):
+     # [B, C, T, H, W] -> [B*t*h*w, C*pt*ph*pw]
+     b, c, t_full, h_full, w_full = latent.shape
+@@ -496,12 +486,30 @@ def _cond_audio_rows(self, payload, device):
+         return torch.cat(rows, dim=0) if rows else None
+ 
+     def forward(self, x, timestep, context, transformer_options={}, minimax_payload=None, **kwargs):
+-        return comfy.patcher_extension.WrapperExecutor.new_class_executor(
++        # the sampler carries the audio as (sigma_v / sigma_a) * x_audio; undo it outside
++        # the wrappers so they and the network see the stream's own latent and velocity
++        scale = float((minimax_payload or {}).get("audio_scale", 1.0))
++        audio_x = x[1]
++        if scale != 1.0:
++            shift_v = float(transformer_options.get("minimax_h3_sigma_shift_video", self.sigma_shift_video))
++            shift_a = float(transformer_options.get("minimax_h3_sigma_shift_audio", self.sigma_shift_audio))
++            sigma_v = (timestep.flatten()[0] / 1000.0).float().clamp(min=1e-6)
++            sigma_a = time_shift_sigma(sigma_v, shift_v, shift_a)
++            audio_x = audio_x * (sigma_a / sigma_v).to(audio_x.dtype)
++            x = [x[0], audio_x]
++
++        out = comfy.patcher_extension.WrapperExecutor.new_class_executor(
+             self._forward,
+             self,
+             comfy.patcher_extension.get_all_wrappers(comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, transformer_options)
+         ).execute(x, timestep, context, transformer_options, minimax_payload=minimax_payload, **kwargs)
+ 
++        if scale != 1.0:
++            # d/d(sigma_v) of the carried variable
++            out[1] = ((1.0 - scale) * audio_x
++                      + (1.0 + (scale - 1.0) * sigma_a).to(out[1].dtype) * out[1])
++        return out
++
+     def _forward(self, x, timestep, context, transformer_options={}, minimax_payload=None, **kwargs):
+         video_x, audio_x = x[0], x[1]
+         orig_t, orig_h, orig_w = video_x.shape[2], video_x.shape[3], video_x.shape[4]
+@@ -639,8 +647,4 @@ def block_wrap(args):
+         video_out = video_out[:, :, :orig_t, :orig_h, :orig_w]
+         audio_out = unpack_audio(a)
+ 
+-        # The sampler integrates the flat ODE dX/dsigma_v = (X - denoised)/sigma_v.
+-        # Scaling the audio velocity by d(sigma_a)/d(sigma_v) makes that ODE equal
+-        # to the audio stream's true ODE on its own shifted schedule.
+-        slope_a = time_shift_slope(sigma_v, shift_v, shift_a).to(audio_out.dtype)
+-        return [-video_out.to(video_x.dtype), (-slope_a) * audio_out.to(audio_x.dtype)]
++        return [-video_out.to(video_x.dtype), -audio_out.to(audio_x.dtype)]
+diff --git a/comfy/model_base.py b/comfy/model_base.py
+index 6f75d53b52d..1b9247fe0cd 100644
+--- a/comfy/model_base.py
++++ b/comfy/model_base.py
+@@ -22,6 +22,7 @@
+ import logging
+ import comfy.ldm.lightricks.av_model
+ import comfy.ldm.minimax.model
++import comfy.nested_tensor
+ import comfy.ldm.lightricks.symmetric_patchifier
+ import comfy.context_windows
+ from comfy.ldm.modules.diffusionmodules.openaimodel import UNetModel, Timestep
+@@ -100,6 +101,7 @@ class ModelType(Enum):
+     FLOW_COSMOS = 10
+     IMG_TO_IMG_FLOW = 11
+     V_PREDICTION_DDPM = 12
++    FLOW_AV = 13
+ 
+ 
+ def model_sampling(model_config, model_type):
+@@ -136,6 +138,9 @@ def model_sampling(model_config, model_type):
+         c = comfy.model_sampling.IMG_TO_IMG_FLOW
+     elif model_type == ModelType.V_PREDICTION_DDPM:
+         c = comfy.model_sampling.V_PREDICTION_DDPM
++    elif model_type == ModelType.FLOW_AV:
++        c = comfy.model_sampling.CONST
++        s = comfy.model_sampling.ModelSamplingAV
+ 
+     class ModelSampling(s, c):
+         pass
+@@ -180,6 +185,7 @@ def __init__(self, model_config, model_type=ModelType.EPS, device=None, unet_mod
+ 
+         self.model_type = model_type
+         self.model_sampling = model_sampling(model_config, model_type)
++        self.latent_shapes = None  # set by the sampler for models that pack several streams into one latent
+ 
+         self.adm_channels = unet_config.get("adm_in_channels", None)
+         if self.adm_channels is None:
+@@ -2065,9 +2071,33 @@ def extra_conds(self, **kwargs):
+         return out
+ 
+ class MiniMaxH3(BaseModel):
+-    def __init__(self, model_config, model_type=ModelType.FLOW, device=None):
++    def __init__(self, model_config, model_type=ModelType.FLOW_AV, device=None):
+         super().__init__(model_config, model_type, device=device, unet_model=comfy.ldm.minimax.model.MiniMaxH3Model)
+ 
++    def audio_scale(self):
++        """Scale the sampler carries the audio stream at, 1.0 when not sampling the packed latent."""
++        if self.latent_shapes is None or len(self.latent_shapes) < 2:
++            return 1.0
++        return self.model_sampling.audio_scale
++
++    def _scale_audio_slice(self, latent, scale):
++        # the sampler carries the audio stream scaled onto the video schedule
++        if scale == 1.0:
++            return latent
++        if latent.is_nested:  # the x0 output hands back the unpacked view
++            streams = latent.unbind()
++            return comfy.nested_tensor.NestedTensor([streams[0], streams[1] * scale] + list(streams[2:]))
++        n = math.prod(self.latent_shapes[0][1:])
++        latent = latent.clone()
++        latent[..., n:] *= scale
++        return latent
++
++    def process_latent_in(self, latent):
++        return self._scale_audio_slice(super().process_latent_in(latent), self.audio_scale())
++
++    def process_latent_out(self, latent):
++        return super().process_latent_out(self._scale_audio_slice(latent, 1.0 / self.audio_scale()))
++
+     def extra_conds(self, **kwargs):
+         out = super().extra_conds(**kwargs)
+         cross_attn = kwargs.get("cross_attn", None)
+@@ -2102,6 +2132,8 @@ def extra_conds(self, **kwargs):
+         if kwargs.get("minimax_audio_cond_noise_aug", None) is not None:
+             payload["audio_cond_noise_aug"] = kwargs["minimax_audio_cond_noise_aug"]
+         payload["seed"] = kwargs.get("seed", 0)
++        # same value process_latent_in/out used, so the model never undoes a scale that was not applied
++        payload["audio_scale"] = self.audio_scale()
+         if cross_attn is not None and latent_shapes is not None and len(latent_shapes) > 1:
+             # packed layout built once per sampling run, h/w rounded up to the DiT's 2x2 patch
+             vs = latent_shapes[0]
+diff --git a/comfy/model_sampling.py b/comfy/model_sampling.py
+index 5af336e76fd..7b00d670402 100644
+--- a/comfy/model_sampling.py
++++ b/comfy/model_sampling.py
+@@ -325,6 +325,27 @@ def percent_to_sigma(self, percent):
+             return 0.0
+         return time_snr_shift(self.shift, 1.0 - percent)
+ 
++class ModelSamplingAV(ModelSamplingDiscreteFlow):
++    """Flow sampling for packed audio-video latents whose audio stream has its own flow shift.
++
++    Carrying the audio latent scaled onto the video schedule makes the pack an ordinary
++    single-schedule flow latent whose audio target is scaled by audio_scale.
++    """
++    def __init__(self, model_config=None):
++        super().__init__(model_config)
++        sampling_settings = model_config.sampling_settings if model_config is not None else {}
++        self.audio_shift = sampling_settings.get("audio_shift", None)
++
++    def set_parameters(self, shift=1.0, audio_shift=None, timesteps=1000, multiplier=1000):
++        self.audio_shift = audio_shift
++        super().set_parameters(shift=shift, timesteps=timesteps, multiplier=multiplier)
++
++    @property
++    def audio_scale(self):
++        if self.audio_shift is None:
++            return 1.0
++        return self.shift / self.audio_shift
++
+ class StableCascadeSampling(ModelSamplingDiscrete):
+     def __init__(self, model_config=None):
+         super().__init__()
+diff --git a/comfy/samplers.py b/comfy/samplers.py
+index a280f3bb69f..1d6a4e10473 100755
+--- a/comfy/samplers.py
++++ b/comfy/samplers.py
+@@ -1218,6 +1218,8 @@ def predict_noise(self, x, timestep, model_options={}, seed=None):
+         return sampling_function(self.inner_model, x, timestep, self.conds.get("negative", None), self.conds.get("positive", None), self.cfg, model_options=model_options, seed=seed)
+ 
+     def inner_sample(self, noise, latent_image, device, sampler, sigmas, denoise_mask, callback, disable_pbar, seed, latent_shapes=None):
++        self.inner_model.latent_shapes = latent_shapes
++
+         if latent_image is not None and torch.count_nonzero(latent_image) > 0: #Don't shift the empty latent image.
+             latent_image = self.inner_model.process_latent_in(latent_image)
+ 
+diff --git a/comfy/supported_models.py b/comfy/supported_models.py
+index 51b58ed1e2a..bc53594d7a8 100644
+--- a/comfy/supported_models.py
++++ b/comfy/supported_models.py
+@@ -963,6 +963,7 @@ class MiniMaxH3(supported_models_base.BASE):
+ 
+     sampling_settings = {
+         "shift": 12.0,
++        "audio_shift": 3.0,
+     }
+ 
+     unet_extra_config = {}
+diff --git a/comfy_extras/nodes_lt.py b/comfy_extras/nodes_lt.py
+index b4806bd6a2d..8c85c92b10b 100644
+--- a/comfy_extras/nodes_lt.py
++++ b/comfy_extras/nodes_lt.py
+@@ -758,22 +758,60 @@ def define_schema(cls):
+             ],
+         )
+ 
++    @staticmethod
++    def fit_audio(reference, audio, noise_mask):
++        """Trim or zero-pad the audio stream to the length of the one it replaces.
++
++        The padded tail is left unmasked so the model generates it, which is what a
++        clip shorter than the video should do.
++        """
++        dims = [i for i in range(reference.ndim) if reference.shape[i] != audio.shape[i]]
++        if len(dims) == 0:
++            return audio, noise_mask
++        if len(dims) > 1 or dims[0] < 2:
++            raise ValueError("audio latent {} cannot be fitted to {}".format(tuple(audio.shape), tuple(reference.shape)))
++
++        dim, length = dims[0], reference.shape[dims[0]]
++        if noise_mask is not None:  # masks carry their own shape until sampling resizes them
++            noise_mask = comfy.utils.reshape_mask(noise_mask, audio.shape)
++
++        if audio.shape[dim] > length:
++            audio = audio.narrow(dim, 0, length)
++            if noise_mask is not None:
++                noise_mask = noise_mask.narrow(dim, 0, length)
++        else:
++            pad = torch.zeros_like(audio.narrow(dim, 0, 1)).repeat(
++                [length - audio.shape[dim] if i == dim else 1 for i in range(audio.ndim)])
++            audio = torch.cat([audio, pad], dim=dim)
++            if noise_mask is not None:
++                noise_mask = torch.cat([noise_mask, torch.ones_like(pad)], dim=dim)
++        return audio, noise_mask
++
+     @classmethod
+     def execute(cls, video_latent, audio_latent) -> io.NodeOutput:
+         output = {}
+         output.update(video_latent)
+         output.update(audio_latent)
++        video_samples = video_latent["samples"]
++        audio_samples = audio_latent["samples"]
+         video_noise_mask = video_latent.get("noise_mask", None)
+         audio_noise_mask = audio_latent.get("noise_mask", None)
+ 
++        if video_samples.is_nested:  # already an AV latent: keep its video and swap the audio stream
++            streams = video_samples.unbind()
++            video_samples = streams[0]
++            if video_noise_mask is not None:
++                video_noise_mask = video_noise_mask.unbind()[0]
++            audio_samples, audio_noise_mask = cls.fit_audio(streams[1], audio_samples, audio_noise_mask)
++
+         if video_noise_mask is not None or audio_noise_mask is not None:
+             if video_noise_mask is None:
+-                video_noise_mask = torch.ones_like(video_latent["samples"])
++                video_noise_mask = torch.ones_like(video_samples)
+             if audio_noise_mask is None:
+-                audio_noise_mask = torch.ones_like(audio_latent["samples"])
++                audio_noise_mask = torch.ones_like(audio_samples)
+             output["noise_mask"] = comfy.nested_tensor.NestedTensor((video_noise_mask, audio_noise_mask))
+ 
+-        output["samples"] = comfy.nested_tensor.NestedTensor((video_latent["samples"], audio_latent["samples"]))
++        output["samples"] = comfy.nested_tensor.NestedTensor((video_samples, audio_samples))
+ 
+         return io.NodeOutput(output)
+ 
+diff --git a/comfy_extras/nodes_minimax_h3.py b/comfy_extras/nodes_minimax_h3.py
+index 22bc91cd457..0b1840e851c 100644
+--- a/comfy_extras/nodes_minimax_h3.py
++++ b/comfy_extras/nodes_minimax_h3.py
+@@ -283,9 +283,9 @@ def execute(cls, clip, vae, audio_vae, prompt, width, height, length, ref_image_
+ class MiniMaxH3SigmaShift(io.ComfyNode):
+     """Set the video/audio flow shifts coherently.
+ 
+-    The video shift drives the sampler's sigma schedule; both values are also
+-    handed to the DiT, which inverts the video schedule to the shared base grid
+-    and derives the audio schedule from it.
++    The video shift drives the sampler's sigma schedule (ModelSamplingAV); both
++    values are also handed to the DiT, which inverts the video schedule to the
++    shared base grid and derives the audio schedule from it.
+     """
+ 
+     @classmethod
+@@ -293,7 +293,8 @@ def define_schema(cls):
+         return io.Schema(
+             node_id="MiniMaxH3SigmaShift",
+             description="Set the video/audio flow shifts.",
+-            display_name="MiniMax H3 Sigma Shift",
++            display_name="ModelSamplingMiniMaxH3",
++            search_aliases=["sigma shift", "minimax shift"],
+             category="model/patch/minimax",
+             inputs=[
+                 io.Model.Input("model"),
+@@ -307,12 +308,12 @@ def define_schema(cls):
+     def execute(cls, model, shift_video, shift_audio) -> io.NodeOutput:
+         m = model.clone()
+ 
+-        class ModelSamplingAdvanced(comfy.model_sampling.ModelSamplingDiscreteFlow, comfy.model_sampling.CONST):
++        class ModelSamplingAdvanced(comfy.model_sampling.ModelSamplingAV, comfy.model_sampling.CONST):
+             pass
+ 
+         original = m.get_model_object("model_sampling")
+         model_sampling = ModelSamplingAdvanced(model.model.model_config)
+-        model_sampling.set_parameters(shift=shift_video)
++        model_sampling.set_parameters(shift=shift_video, audio_shift=shift_audio)
+         if hasattr(original, "noise_scale"):
+             model_sampling.set_noise_scale(original.noise_scale)
+         m.add_object_patch("model_sampling", model_sampling)
+@@ -329,7 +330,7 @@ async def get_node_list(self):
+             EmptyMiniMaxH3LatentAV,
+             MiniMaxH3ImageToVideo,
+             MiniMaxH3ReferenceToVideo,
+-            MiniMaxH3SigmaShift
++            MiniMaxH3SigmaShift,
+             ]
+ 
+ 

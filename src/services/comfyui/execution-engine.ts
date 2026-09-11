@@ -104,9 +104,19 @@ export async function executeWorkflow(
     onProgress?.({ stage: "submitting", progress: 10, message: "提交工作流..." });
     const { promptId, apiWorkflow } = await submitWorkflow(baseUrl, workflow);
 
+    // 仅提交模式：不等待生成完成，立即返回 promptId（用于「测试」按钮）
+    if ((config as any).submitOnly) {
+      return {
+        success: true,
+        promptId,
+        duration: Date.now() - startTime,
+      };
+    }
+
     // ---- Step 2: 轮询结果 ----
     onProgress?.({ stage: "executing", progress: 20, message: `执行中 (ID: ${promptId})...` });
-    const outputs = await pollForResult(baseUrl, promptId, onProgress);
+    const maxWait = (config as any)?.options?.maxWaitMs ?? (config as any)?.maxWaitMs;
+    const outputs = await pollForResult(baseUrl, promptId, onProgress, maxWait);
 
     // ---- Step 3: 下载产物 ----
     onProgress?.({ stage: "downloading", progress: 80, message: "下载生成结果..." });
@@ -306,12 +316,14 @@ function formatComfyUIError(data: any): string {
 
 /**
  * 轮询 ComfyUI 直到任务完成
+ * maxWaitMs 默认 45 分钟——H3 等大模型完整生成常超过原 10 分钟上限，
+ * 导致“执行超时”误报（任务实际仍在 ComfyUI 后台运行）
  */
 async function pollForResult(
   baseUrl: string,
   promptId: string,
   onProgress?: ProgressCallback,
-  maxWaitMs: number = 10 * 60 * 1000,  // 默认 10 分钟
+  maxWaitMs: number = 45 * 60 * 1000,  // 默认 45 分钟
   pollIntervalMs: number = 3000         // 3 秒轮询
 ): Promise<Record<string, HistoryOutput>> {
   const startTime = Date.now();

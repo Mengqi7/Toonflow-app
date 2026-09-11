@@ -1,0 +1,365 @@
+{
+  "92": {
+    "inputs": {
+      "filename_prefix": "video/MiniMax_H3",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "105:91",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "保存视频"
+    }
+  },
+  "114": {
+    "inputs": {
+      "image": "Krea2_turbo_00002_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "115": {
+    "inputs": {
+      "aspect_ratio": "1:1 (Square)",
+      "megapixels": 0.4,
+      "multiple": 32
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "分辨率选择器"
+    }
+  },
+  "119": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "megapixels": 0.9,
+      "resolution_steps": 32
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "缩放图像（像素）"
+    }
+  },
+  "120": {
+    "inputs": {
+      "image": [
+        "119",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "获取图像尺寸"
+    }
+  },
+  "105:11": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "105:24": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "105:17": {
+    "inputs": {
+      "sampler_name": "res_multistep"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "K采样器选择"
+    }
+  },
+  "105:6": {
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "105:13": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "105:15": {
+    "inputs": {
+      "noise_seed": 560310797167622
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "随机噪波"
+    }
+  },
+  "105:125": {
+    "inputs": {
+      "value": 8
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "整数"
+    }
+  },
+  "105:126": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Boolean (Enable Lightning LoRA)"
+    }
+  },
+  "105:111": {
+    "inputs": {
+      "value": 5
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float (duration)"
+    }
+  },
+  "105:124": {
+    "inputs": {
+      "value": 20
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "整数"
+    }
+  },
+  "105:121": {
+    "inputs": {
+      "lora_name": "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "105:6",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoRA加载器（仅模型）"
+    }
+  },
+  "105:107": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "105:111",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "数学表达式"
+    }
+  },
+  "105:123": {
+    "inputs": {
+      "switch": [
+        "105:126",
+        0
+      ],
+      "on_false": [
+        "105:124",
+        0
+      ],
+      "on_true": [
+        "105:125",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch (Steps)"
+    }
+  },
+  "105:122": {
+    "inputs": {
+      "switch": [
+        "105:126",
+        0
+      ],
+      "on_false": [
+        "105:6",
+        0
+      ],
+      "on_true": [
+        "105:121",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch (Model)"
+    }
+  },
+  "105:104": {
+    "inputs": {
+      "prompt": "integrated_multimodal_description\n[Shot 1]\n0.00s - 1.20s：画面起始于\n<Picture 1>\n，一位年轻女性（S1）站立在明亮的户外场景中，身穿色彩鲜艳的传统服饰，包括红色上衣、黄色袖子、绿色内搭和蓝色长裙。她面带微笑，双手自然垂放于身体两侧，姿态端庄。镜头以中景呈现，光线柔和，背景简洁，营造出宁静而优雅的氛围。\n1.20s - 2.50s：（S1）开始起舞，双臂缓缓抬起，手腕轻柔地翻转，衣袖随之飘动。她的步伐轻盈，身体随着节奏微微摆动，展现出流畅的舞蹈动作。镜头保持中景，捕捉她优雅的姿态和服饰的细节。\n2.50s - 3.80s：（S1）继续舞蹈，动作逐渐加大，双臂在空中划出优美的弧线，裙摆随步伐轻轻摇曳。她的表情专注而愉悦，眼神中透露出对舞蹈的热爱。镜头略微推进，聚焦于她的面部表情和上半身动作，增强视觉冲击力。\n3.80s - 5.00s：（S1）完成最后一个舞蹈动作，双臂缓缓放下，身体微微前倾，随后恢复站立姿态。她的微笑依旧，眼神中充满满足感。镜头拉远至全景，展示她完整的舞蹈动作和周围的环境，画面定格在她优雅的姿态上。\n\noverall_soundscape\n环境音：轻柔的风声和远处隐约的自然声响，营造出宁静而开阔的氛围。\n音效：衣物摩擦声和脚步轻触地面的声音，与舞蹈动作同步，增强真实感。\n音乐：轻柔的传统乐器演奏，如古筝或笛子，旋律悠扬，与舞蹈节奏相协调，烘托出优雅而宁静的氛围。\n\nnon_diegetic_music\n音乐风格：传统与现代融合，以古筝和笛子为主，辅以轻柔的电子音效，营造出梦幻而宁静的氛围。\n节奏：缓慢而流畅，与舞蹈动作同步，每个乐句对应一个舞蹈动作，增强视觉与听觉的和谐。\n情感：宁静、优雅、愉悦，与画面中的舞蹈动作和人物表情相呼应，营造出一种梦幻而美好的氛围。",
+      "width": [
+        "115",
+        0
+      ],
+      "height": [
+        "115",
+        1
+      ],
+      "length": [
+        "105:107",
+        1
+      ],
+      "clip": [
+        "105:13",
+        0
+      ],
+      "vae": [
+        "105:11",
+        0
+      ],
+      "first_frame": [
+        "114",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ImageToVideo",
+    "_meta": {
+      "title": "MiniMax H3 Image to Video"
+    }
+  },
+  "105:9": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": [
+        "105:123",
+        0
+      ],
+      "denoise": 1,
+      "model": [
+        "105:122",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "基本调度器"
+    }
+  },
+  "105:16": {
+    "inputs": {
+      "model": [
+        "105:122",
+        0
+      ],
+      "conditioning": [
+        "105:104",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "基本引导器"
+    }
+  },
+  "105:14": {
+    "inputs": {
+      "noise": [
+        "105:15",
+        0
+      ],
+      "guider": [
+        "105:16",
+        0
+      ],
+      "sampler": [
+        "105:17",
+        0
+      ],
+      "sigmas": [
+        "105:9",
+        0
+      ],
+      "latent_image": [
+        "105:104",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "自定义采样器（高级）"
+    }
+  },
+  "105:23": {
+    "inputs": {
+      "samples": [
+        "105:14",
+        0
+      ],
+      "vae": [
+        "105:24",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE解码（音频）"
+    }
+  },
+  "105:10": {
+    "inputs": {
+      "samples": [
+        "105:14",
+        0
+      ],
+      "vae": [
+        "105:11",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "105:91": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "images": [
+        "105:10",
+        0
+      ],
+      "audio": [
+        "105:23",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "创建视频"
+    }
+  }
+}
